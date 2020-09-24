@@ -1,40 +1,65 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-type Node = Option<Box<Link>>;
+type Node<'a> = Option<Box<Link<'a>>>;
 
-struct Link {
-    key: String,
+struct Link<'a> {
+    key: &'a str,
     val: i32,
-    next: Node
+    next: Node<'a>
 }
 
-const InitBucketCount: usize = 1024;
-pub struct HashTable {
+const INIT_BUCKET_COUNT: usize = 1024;
+pub struct HashTable<'a> {
     numElems: i32,
     numBuckets: usize,
-    buckets: Vec<Link>
+    buckets: Vec<Node<'a>>
 }   
 
-impl HashTable{
-    pub fn new() -> Self {
-        HashTable{ numElems : 0, numBuckets: InitBucketCount, buckets : Vec::with_capacity(InitBucketCount) }
-    }
-
-    pub fn put(&self, key: String, val: i32) {
-        let hash_val = get_hash(key) % self.numBuckets;
-
-    }
+impl<'a> Link<'a>{
+    pub fn new(key: &'a str, val: i32) -> Self {
+        Link{ key, val, next : None }
+    }   
 }
 
-fn get_hash(key: String) -> u64 {
+impl HashTable<'_>{
+    pub fn new() -> Self {
+        HashTable{ numElems : 0, numBuckets: INIT_BUCKET_COUNT, buckets : Vec::with_capacity(INIT_BUCKET_COUNT) }
+    }
+
+    pub fn put(&self, key: &str, val: i32) {
+        // This looks... terrible. 
+        let hash_val = ( get_hash(key) % (self.numBuckets as u64) ) as usize;
+        println!("{}", hash_val);
+        let link = match self.buckets.get(hash_val) {
+            None => {
+                let new_link = Link::new(key,val);
+                Box::new(new_link)
+            }
+            Some(L) => {
+                // Loop through and see if exists
+                *L
+            }
+        };
+        link.next = self.buckets.get(hash_val);
+        self.buckets[hash_val] = link;
+    }
+
+    pub fn get(&self, key: &str) -> i32 {
+        let hash_val = get_hash(key) % (self.numBuckets as u64);
+        return 5;
+    }   
+}
+
+fn get_hash(key: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
     hasher.finish()
 }
 
 fn main() {
-    let myMap = HashTable::new();
+    let my_map = HashTable::new();
+    my_map.put(&"K1", 1)
 }
 
 #[cfg(test)]
