@@ -1,6 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::mem;
 
 type Node<'a> = Option<Box<Link<'a>>>;
 
@@ -38,7 +37,7 @@ impl<'a> HashTable<'a>{
         let mut new_link = Link::new(key,val);
         if let Some(n) = self.buckets.get_mut(hash_val) {
             //N is &mut Node
-            if let Some(l) = mem::replace(n, None) {
+            if let Some(l) = n.take() {
                 //L is Box<Link>
                 new_link.next = Some(l);
             }
