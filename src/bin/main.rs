@@ -1,8 +1,8 @@
-use rlox::operand;
-use rlox::chunk::{OpCode, Instruction};
-use std::mem::size_of;
+use rlox::debug::disassemble_chunk;
+use rlox::chunk::{OpCode, Chunk};
 fn main() {
-    let instruction = Instruction::new(OpCode::OP_CONSTANT, operand![23], 0);
-    let s = size_of::<Instruction>();
-    println!("Hello, instruction! {:#04X?} of size {}", instruction, s);
+    let mut chunk = Chunk::new();
+    chunk.code.push(OpCode::OP_RETURN.into());
+    chunk.lines.push(1);
+    disassemble_chunk(&chunk, "Test");
 }
