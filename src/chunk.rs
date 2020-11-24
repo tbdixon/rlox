@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(u8)]
 pub enum OpCode {
     OP_RETURN,
@@ -26,14 +26,27 @@ impl From<u8> for OpCode {
     }
 }
 
+type Value = f64;
+type ConstantPool = Vec<Value>;
 #[derive(Debug)]
 pub struct Chunk {
     pub code: Vec<u8>,
     pub lines: Vec<i32>,
+    pub constant_pool: ConstantPool,
 }
 
 impl Chunk {
     pub fn new() -> Chunk {
-        Chunk{ code:  Vec::new(), lines: Vec::new() }
+        Chunk{ code:  Vec::new(), lines: Vec::new(), constant_pool: Vec::new() }
+    }
+
+    pub fn write(&mut self, byte: u8, line: i32) {
+        self.code.push(byte);
+        self.lines.push(line);
+    }
+
+    pub fn add_constant(&mut self, value: Value) -> usize {
+        self.constant_pool.push(value);
+        self.constant_pool.len() - 1
     }
 }
