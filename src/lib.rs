@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 pub mod chunk;
 pub mod debug;
+pub mod vm;
 
 #[macro_export]
 macro_rules! operand {
