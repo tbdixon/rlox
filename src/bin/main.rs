@@ -1,4 +1,3 @@
-use rlox::debug::disassemble_chunk;
 use rlox::chunk::{OpCode, Chunk};
 use rlox::vm::VM;
 
