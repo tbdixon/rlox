@@ -2,15 +2,16 @@
 pub mod chunk;
 pub mod debug;
 pub mod vm;
+const DEBUG: bool = true;
 
 #[macro_export]
 macro_rules! debugln {
      ($($arg:tt)*) => {
          {
-            use std::env;
-            if let Ok(_) = env::var("RUST_DEBUG") {
+             use super::DEBUG;
+             if(DEBUG) {
                 println!($($arg)*);
-            }
+             }
          }
     };
 }
@@ -19,14 +20,13 @@ macro_rules! debugln {
 macro_rules! debug {
      ($($arg:tt)*) => {
          {
-            use std::env;
-            if let Ok(_) = env::var("RUST_DEBUG") {
+            use super::DEBUG;
+            if(DEBUG) {
                 print!($($arg)*);
             }
          }
     };
 }
-
 
 #[macro_export]
 macro_rules! operand {
@@ -42,5 +42,3 @@ macro_rules! operand {
         }
     };
 }
-
-
