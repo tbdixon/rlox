@@ -73,6 +73,11 @@ impl VM {
         self.stack.push(operator(left, right));
     }
 
+    pub fn interpret(&mut self, mut source: &str) {
+        source = source.trim();
+        println!("{}",source);
+    }
+
     pub fn run(&mut self) -> InterpretResult {
         let mut result: Option<InterpretResult> = None;
         debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");

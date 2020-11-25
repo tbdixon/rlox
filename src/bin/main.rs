@@ -1,22 +1,35 @@
-use rlox::chunk::{Chunk, OpCode};
+use std::env;
+use std::io::prelude::*;
+use std::io;
+use std::fs;
+use rlox::Result;
 use rlox::vm::VM;
 
-fn main() {
-    let mut vm = VM::new();
-    let mut chunk = Chunk::new();
-    let constant = chunk.add_constant(1.2);
-    chunk.write(OpCode::OP_CONSTANT.into(), 1);
-    chunk.write(constant as u8, 1);
-    let constant = chunk.add_constant(3.4);
-    chunk.write(OpCode::OP_CONSTANT.into(), 2);
-    chunk.write(constant as u8, 2);
-    chunk.write(OpCode::OP_ADD.into(), 3);
-    let constant = chunk.add_constant(5.6);
-    chunk.write(OpCode::OP_CONSTANT.into(), 4);
-    chunk.write(constant as u8, 4);
-    chunk.write(OpCode::OP_DIVIDE.into(), 5);
-    chunk.write(OpCode::OP_NEGATE.into(), 5);
-    chunk.write(OpCode::OP_RETURN.into(), 4);
-    vm.chunk = chunk;
-    vm.run();
+fn main() -> Result<()>{
+    let vm = VM::new();
+    let args: Vec<String> = env::args().collect();
+    match args.len() {
+        1 => {
+            repl(vm)?
+        },
+        2 => {
+            let script = fs::read_to_string(&args[1]).expect(&format!("Unable to read script {}", args[1]));
+            print!("{}",script);
+        },
+        _ => {
+            panic!("Invalid arguments received: {:?}", args);
+        }
+    };
+    Ok(())
+}
+
+fn repl(mut vm: VM) -> Result<()> {
+    loop {
+        let mut line = String::new();
+        print!("> ");
+        io::stdout().flush()?;
+        io::stdin().read_line(&mut line)?;
+        vm.interpret(&line[..]);
+        println!("{}",line);
+    }
 }
