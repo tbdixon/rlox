@@ -1,5 +1,5 @@
-use crate::scanner::TokenType::*;
 use crate::scanner::Scanner;
+use crate::scanner::TokenType::*;
 
 pub fn compile(source: &str) {
     let mut scanner = Scanner::new(source.trim());
@@ -11,4 +11,3 @@ pub fn compile(source: &str) {
         }
     }
 }
-

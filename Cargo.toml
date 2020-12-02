@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 strum = "0.20"
 strum_macros = "0.20"
+itertools = "0.9.0"
