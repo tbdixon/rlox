@@ -75,6 +75,7 @@ impl Chunk {
         self.constant_pool.len() - 1
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

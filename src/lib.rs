@@ -2,6 +2,8 @@
 pub mod chunk;
 pub mod debug;
 pub mod vm;
+pub mod scanner;
+pub mod compiler;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

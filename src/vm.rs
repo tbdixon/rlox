@@ -1,5 +1,6 @@
 use crate::chunk::{Chunk, OpCode, Value};
 use crate::debug::disassemble_instruction;
+use crate::compiler::compile;
 use crate::debugln;
 
 pub enum InterpretResult {
@@ -73,8 +74,8 @@ impl VM {
         self.stack.push(operator(left, right));
     }
 
-    pub fn interpret(&mut self, mut source: &str) {
-        source = source.trim();
+    pub fn interpret(&mut self, source: &str) {
+        compile(source);
         println!("{}",source);
     }
 
