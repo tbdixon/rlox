@@ -5,13 +5,24 @@ use std::str::Chars;
 
 type SourceEnumItem = (usize,char);
 const EOF_CHAR: char = '\0';
-const EOF_MARKER: SourceEnumItem = (usize::MAX, EOF_CHAR);
+const EOF_IDX: usize = usize::MAX;
+const EOF_MARKER: SourceEnumItem = (EOF_IDX, EOF_CHAR);
 
 pub struct Scanner<'a> {
     source: &'a str,
     source_itr: MultiPeek<Enumerate<Chars<'a>>>,
     start_idx: usize,
     line_num: i32,
+}
+
+trait CharExt {
+    fn is_lox_alpha(&self) -> bool;
+}
+
+impl CharExt for char {
+    fn is_lox_alpha(&self) -> bool {
+        self.is_ascii_alphabetic() || *self == '_'
+    }
 }
 
 trait TupleExt {
@@ -128,11 +139,11 @@ impl Token<'_> {
         }
     }
 
-    pub fn eof() -> Token<'static> {
+    pub fn eof(line_num:i32) -> Token<'static> {
         Token {
             kind: TOKEN_EOF_CHAR,
             lexeme: "",
-            line_num: -1,
+            line_num,
         }
     }
 
@@ -202,8 +213,8 @@ impl Scanner<'_> {
         self.source_itr.peek_two().unwrap_or(EOF_MARKER).ch()
     }
 
-    // Returns usize::MAX for index if at the end of the iterator.
-    // Presumably using usize::MAX is a safe sentinal value since
+    // Returns EOF_IDX for index if at the end of the iterator.
+    // Presumably using EOF_IDX is a safe sentinal value since
     // source code probably isn't 2^64 - 1 characters long.
     fn peek_idx(&mut self) -> usize {
         self.source_itr.peek_next().unwrap_or(EOF_MARKER).idx()
@@ -237,6 +248,49 @@ impl Scanner<'_> {
         self.make_token(TOKEN_STRING)
     }
 
+    fn number(&mut self) -> Token {
+        while self.peek_char().is_ascii_digit() {
+            self.advance();
+        }
+        if self.peek_char() == '.' && self.peek_two_chars().is_ascii_digit() {
+            self.advance();
+            while self.peek_char().is_ascii_digit() {
+                self.advance();
+            }
+        }
+        self.make_token(TOKEN_NUMBER)
+    }
+
+    fn identifier(&mut self) -> Token {
+        while self.peek_char().is_lox_alpha() || self.peek_char().is_ascii_digit() {
+           self.advance();
+        }
+        let identifier_type = self.identifier_type();
+        self.make_token(identifier_type)
+    }
+
+    fn identifier_type(&mut self) -> TokenType {
+        match &self.current_lexeme().to_lowercase()[..] {
+            "and" => TOKEN_AND,
+            "class" => TOKEN_CLASS,
+            "else" => TOKEN_ELSE,
+            "if" => TOKEN_IF,
+            "nil" => TOKEN_NIL,
+            "or" => TOKEN_OR,
+            "print" => TOKEN_PRINT,
+            "return" => TOKEN_RETURN,
+            "super" => TOKEN_SUPER,
+            "var" => TOKEN_VAR,
+            "while" => TOKEN_WHILE,
+            "false" => TOKEN_FALSE,
+            "for" => TOKEN_FOR,
+            "fun" => TOKEN_FUN,
+            "this" => TOKEN_THIS,
+            "true" => TOKEN_TRUE,
+            _ => TOKEN_IDENTIFIER
+        }
+    }
+
     pub fn scan_token(&mut self) -> Token {
         self.eat_whitespace_and_comments();
         let (start_idx, ch) = self.advance();
@@ -254,7 +308,9 @@ impl Scanner<'_> {
             '/' => self.make_token(TOKEN_SLASH),
             '*' => self.make_token(TOKEN_STAR),
             '"' => self.string(),
-            EOF_CHAR => Token::eof(),
+            ch if ch.is_ascii_digit() => self.number(), 
+            ch if ch.is_lox_alpha() => self.identifier(),
+            EOF_CHAR => Token::eof(self.line_num),
             _ => Token::error(self.line_num, self.current_lexeme()),
         }
     }
@@ -263,13 +319,79 @@ impl Scanner<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+   
+    #[test]
+    fn test_keywords() {
+        let source = "and class else false for fun if nil or print return super this true var while";
+        let mut scanner = Scanner::new(source);
+        let res = vec![
+            Token{ kind: TOKEN_AND, lexeme: "and", line_num: 1 },
+            Token{ kind: TOKEN_CLASS, lexeme: "class", line_num: 1 },
+            Token{ kind: TOKEN_ELSE,lexeme: "else", line_num: 1 },
+            Token{ kind: TOKEN_FALSE,lexeme: "false", line_num: 1 },
+            Token{ kind: TOKEN_FOR,lexeme: "for", line_num: 1 },
+            Token{ kind: TOKEN_FUN,lexeme: "fun", line_num: 1 },
+            Token{ kind: TOKEN_IF,lexeme: "if", line_num: 1 },
+            Token{ kind: TOKEN_NIL,lexeme: "nil", line_num: 1 },
+            Token{ kind: TOKEN_OR,lexeme: "or", line_num: 1 },
+            Token{ kind: TOKEN_PRINT,lexeme: "print", line_num: 1 },
+            Token{ kind: TOKEN_RETURN,lexeme: "return", line_num: 1 },
+            Token{ kind: TOKEN_SUPER,lexeme: "super", line_num: 1 },
+            Token{ kind: TOKEN_THIS,lexeme: "this", line_num: 1 },
+            Token{ kind: TOKEN_TRUE,lexeme: "true", line_num: 1 },
+            Token{ kind: TOKEN_VAR,lexeme: "var", line_num: 1 },
+            Token{ kind: TOKEN_WHILE,lexeme: "while", line_num: 1 },
+        ];
+        for r in res {
+            assert_eq!(r, scanner.scan_token());
+        }
+        assert_eq!(scanner.scan_token(), Token{ kind: TOKEN_EOF_CHAR,lexeme: "", line_num: 1 });
+    }
+
+    #[test]
+    fn test_operators() {
+        let source = "(){};.-+/*,";
+        let mut scanner = Scanner::new(source);
+        let res = vec![
+            Token{ kind: TOKEN_LEFT_PAREN, lexeme: "(", line_num: 1 },
+            Token{ kind: TOKEN_RIGHT_PAREN, lexeme: ")", line_num: 1 },
+            Token{ kind: TOKEN_LEFT_BRACE, lexeme: "{", line_num: 1 },
+            Token{ kind: TOKEN_RIGHT_BRACE, lexeme: "}", line_num: 1 },
+            Token{ kind: TOKEN_SEMICOLON, lexeme: ";", line_num: 1 },
+            Token{ kind: TOKEN_DOT, lexeme: ".", line_num: 1 },
+            Token{ kind: TOKEN_MINUS, lexeme: "-", line_num: 1 },
+            Token{ kind: TOKEN_PLUS, lexeme: "+", line_num: 1 },
+            Token{ kind: TOKEN_SLASH, lexeme: "/", line_num: 1 },
+            Token{ kind: TOKEN_STAR, lexeme: "*", line_num: 1 },
+            Token{ kind: TOKEN_COMMA, lexeme: ",", line_num: 1 }
+        ];
+        for r in res {
+            assert_eq!(r, scanner.scan_token());
+        }
+    }
+
+    #[test]
+    fn test_number() {
+        let source = "123 123.123";
+        let mut scanner = Scanner::new(source);
+        assert_eq!(Token{ kind: TOKEN_NUMBER, lexeme: "123", line_num: 1}, scanner.scan_token());
+        assert_eq!(Token{ kind: TOKEN_NUMBER, lexeme: "123.123", line_num: 1}, scanner.scan_token());
+    }
+    
+    #[test]
+    fn test_identifier() {
+        let source = "abc abc_123";
+        let mut scanner = Scanner::new(source);
+        assert_eq!(Token{ kind: TOKEN_IDENTIFIER, lexeme: "abc", line_num: 1}, scanner.scan_token());
+        assert_eq!(Token{ kind: TOKEN_IDENTIFIER, lexeme: "abc_123", line_num: 1}, scanner.scan_token());
+     }
 
     #[test]
     fn test_string() {
         let source = "\"Hello\"";
         let mut scanner = Scanner::new(source);
         let token = scanner.scan_token();
-        assert_eq!(token, Token{ kind: TOKEN_STRING, lexeme: &source[..], line_num: 1 });
+        assert_eq!(token, Token{ kind: TOKEN_STRING, lexeme: "\"Hello\"", line_num: 1 });
     }
 
     #[test]
@@ -306,7 +428,7 @@ mod tests {
         assert_eq!(scanner.peek_idx(), 0);
         scanner.advance();
         assert_eq!(scanner.peek_char(), EOF_CHAR);
-        assert_eq!(scanner.peek_idx(), usize::MAX);
+        assert_eq!(scanner.peek_idx(), EOF_IDX);
     }
 
     #[test]
