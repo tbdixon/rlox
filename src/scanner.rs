@@ -217,6 +217,12 @@ impl Scanner<'_> {
         &self.source[self.start_idx..end]
     }
 
+    fn make_token(&mut self, kind: TokenType) -> Token {
+        let line_num = self.line_num;
+        let lexeme = self.current_lexeme();
+        Token{ kind, lexeme, line_num }
+    }
+    
     // Includes the quotation marks in the lexeme
     fn string(&mut self) -> Token {
         while self.peek_char() != '"' {
@@ -228,9 +234,7 @@ impl Scanner<'_> {
             }
         }
         self.advance();
-        let line_num = self.line_num;
-        let lexeme = self.current_lexeme();
-        return Token{ kind: TOKEN_STRING, lexeme, line_num }
+        self.make_token(TOKEN_STRING)
     }
 
     pub fn scan_token(&mut self) -> Token {
@@ -238,6 +242,17 @@ impl Scanner<'_> {
         let (start_idx, ch) = self.advance();
         self.start_idx = start_idx;
         match ch {
+            '(' => self.make_token(TOKEN_LEFT_PAREN),
+            ')' => self.make_token(TOKEN_RIGHT_PAREN),
+            '{' => self.make_token(TOKEN_LEFT_BRACE),
+            '}' => self.make_token(TOKEN_RIGHT_BRACE),
+            ';' => self.make_token(TOKEN_SEMICOLON),
+            ',' => self.make_token(TOKEN_COMMA),
+            '.' => self.make_token(TOKEN_DOT),
+            '-' => self.make_token(TOKEN_MINUS),
+            '+' => self.make_token(TOKEN_PLUS),
+            '/' => self.make_token(TOKEN_SLASH),
+            '*' => self.make_token(TOKEN_STAR),
             '"' => self.string(),
             EOF_CHAR => Token::eof(),
             _ => Token::error(self.line_num, self.current_lexeme()),
