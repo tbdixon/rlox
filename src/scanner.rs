@@ -70,7 +70,7 @@ impl<I: Iterator<Item = SourceEnumItem>> MultiPeekExt for MultiPeek<I> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum TokenType {
     // Single-character tokens.
     TOKEN_LEFT_PAREN,
@@ -120,29 +120,38 @@ pub enum TokenType {
 
     TOKEN_ERROR,
     TOKEN_EOF_CHAR,
+    TOKEN_EMPTY, // Placeholder for Null token
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Token<'a> {
+pub struct Token {
     pub kind: TokenType,
-    pub lexeme: &'a str,
+    pub lexeme: String,
     pub line_num: i32,
 }
 
 use crate::scanner::TokenType::*;
-impl Token<'_> {
+impl Token {
     pub fn error(line_num: i32, lexeme: &str) -> Token {
         Token {
             kind: TOKEN_ERROR,
-            lexeme,
+            lexeme: lexeme.to_string(),
             line_num,
         }
     }
 
-    pub fn eof(line_num:i32) -> Token<'static> {
+    pub fn empty() -> Token {
+        Token { kind: TOKEN_EMPTY, lexeme: String::from(""), line_num: -1 }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.kind == TOKEN_EMPTY
+    }
+    
+    pub fn eof(line_num:i32) -> Token {
         Token {
             kind: TOKEN_EOF_CHAR,
-            lexeme: "",
+            lexeme: String::from(""),
             line_num,
         }
     }
@@ -231,7 +240,7 @@ impl Scanner<'_> {
     fn make_token(&mut self, kind: TokenType) -> Token {
         let line_num = self.line_num;
         let lexeme = self.current_lexeme();
-        Token{ kind, lexeme, line_num }
+        Token{ kind, lexeme: lexeme.to_string(), line_num }
     }
     
     // Includes the quotation marks in the lexeme

@@ -1,7 +1,7 @@
 use crate::chunk::{Chunk, OpCode, Value};
 use crate::debug::disassemble_instruction;
 use crate::compiler::compile;
-use crate::debugln;
+use crate::{debugln, Result};
 
 pub enum InterpretResult {
     INTERPRET_OK,
@@ -75,8 +75,9 @@ impl VM {
     }
 
     pub fn interpret(&mut self, source: &str) {
-        compile(source);
-        println!("{}",source);
+        if let Ok(_) = compile(source, &mut self.chunk) {
+            self.run();
+        }
     }
 
     pub fn run(&mut self) -> InterpretResult {
@@ -84,7 +85,9 @@ impl VM {
         debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
         loop {
             if crate::DEBUG {
-                self.print_stack();
+                if self.stack.top > 0 {
+                    self.print_stack();
+                }
                 disassemble_instruction(&self.chunk, self.ip);
             }
             let instruction = self.read_byte();
