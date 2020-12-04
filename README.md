@@ -1,2 +1,2 @@
 # rlox
-Virtual machine and learning Rust... (https://www.craftinginterpreters.com/a-bytecode-virtual-machine.html)
+Building a virtual machine in Rust based on the C implementation in Crafting Interpreters: www.craftinginterpreters.com

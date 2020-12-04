@@ -3,7 +3,7 @@ use itertools::structs::MultiPeek;
 use std::iter::Enumerate;
 use std::str::Chars;
 
-type SourceEnumItem = (usize,char);
+type SourceEnumItem = (usize, char);
 const EOF_CHAR: char = '\0';
 const EOF_IDX: usize = usize::MAX;
 const EOF_MARKER: SourceEnumItem = (EOF_IDX, EOF_CHAR);
@@ -70,7 +70,7 @@ impl<I: Iterator<Item = SourceEnumItem>> MultiPeekExt for MultiPeek<I> {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
 pub enum TokenType {
     // Single-character tokens.
     TOKEN_LEFT_PAREN,
@@ -119,7 +119,7 @@ pub enum TokenType {
     TOKEN_WHILE,
 
     TOKEN_ERROR,
-    TOKEN_EOF_CHAR,
+    TOKEN_EOF,
     TOKEN_EMPTY, // Placeholder for Null token
 }
 
@@ -132,39 +132,58 @@ pub struct Token {
 
 use crate::scanner::TokenType::*;
 impl Token {
-    pub fn error(line_num: i32, lexeme: &str) -> Token {
+    pub fn error(line_num: i32, lexeme: String) -> Token {
         Token {
             kind: TOKEN_ERROR,
-            lexeme: lexeme.to_string(),
+            lexeme,
             line_num,
         }
     }
 
     pub fn empty() -> Token {
-        Token { kind: TOKEN_EMPTY, lexeme: String::from(""), line_num: -1 }
+        Token {
+            kind: TOKEN_EMPTY,
+            lexeme: String::from(""),
+            line_num: -1,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
         self.kind == TOKEN_EMPTY
     }
-    
-    pub fn eof(line_num:i32) -> Token {
+
+    pub fn eof(line_num: i32) -> Token {
         Token {
-            kind: TOKEN_EOF_CHAR,
+            kind: TOKEN_EOF,
             lexeme: String::from(""),
             line_num,
         }
     }
 
     pub fn is_eof(&self) -> bool {
-        self.kind == TOKEN_EOF_CHAR
+        self.kind == TOKEN_EOF
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.kind == TOKEN_ERROR
+    }
+
+}
+
+impl Default for Token {
+    fn default() -> Self {
+        Self {
+            kind: TOKEN_EMPTY,
+            lexeme: String::from(""),
+            line_num: -1,
+        }
     }
 }
 
 // Scanner works by iterating over the source file as a Character iterator.
 // The iterator points to the character that will be scanned *next* hence peek_char
-// returns the next up character as well. While scanning this keeps track of the 
-// start of a lexeme and loops to the end of that lexeme, storing that as a 
+// returns the next up character as well. While scanning this keeps track of the
+// start of a lexeme and loops to the end of that lexeme, storing that as a
 // string slice in a token returned to the compiler.
 impl Scanner<'_> {
     pub fn new(source: &str) -> Scanner {
@@ -177,8 +196,8 @@ impl Scanner<'_> {
         }
     }
 
-    // Moved the iterator to point to the next element and returns the 
-    // current element that is pointed to by the iterator. If the 
+    // Moved the iterator to point to the next element and returns the
+    // current element that is pointed to by the iterator. If the
     // iterator is at the end of the source then return the EOF markers.
     fn advance(&mut self) -> SourceEnumItem {
         self.source_itr.next().unwrap_or(EOF_MARKER)
@@ -240,14 +259,18 @@ impl Scanner<'_> {
     fn make_token(&mut self, kind: TokenType) -> Token {
         let line_num = self.line_num;
         let lexeme = self.current_lexeme();
-        Token{ kind, lexeme: lexeme.to_string(), line_num }
+        Token {
+            kind,
+            lexeme: lexeme.to_string(),
+            line_num,
+        }
     }
-    
+
     // Includes the quotation marks in the lexeme
     fn string(&mut self) -> Token {
         while self.peek_char() != '"' {
             if self.at_end() {
-                return Token::error(self.line_num, "Unterminated string.");
+                return Token::error(self.line_num, "Unterminated string".to_string());
             }
             if self.advance().ch() == '\n' {
                 self.line_num += 1;
@@ -272,7 +295,7 @@ impl Scanner<'_> {
 
     fn identifier(&mut self) -> Token {
         while self.peek_char().is_lox_alpha() || self.peek_char().is_ascii_digit() {
-           self.advance();
+            self.advance();
         }
         let identifier_type = self.identifier_type();
         self.make_token(identifier_type)
@@ -296,8 +319,20 @@ impl Scanner<'_> {
             "fun" => TOKEN_FUN,
             "this" => TOKEN_THIS,
             "true" => TOKEN_TRUE,
-            _ => TOKEN_IDENTIFIER
+            _ => TOKEN_IDENTIFIER,
         }
+    }
+
+    pub fn scan(&mut self) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        let mut token = self.scan_token();
+        while !token.is_eof() {
+            tokens.push(token);
+            token = self.scan_token();
+        }
+        tokens.push(token);
+        tokens.reverse();
+        tokens
     }
 
     pub fn scan_token(&mut self) -> Token {
@@ -317,10 +352,10 @@ impl Scanner<'_> {
             '/' => self.make_token(TOKEN_SLASH),
             '*' => self.make_token(TOKEN_STAR),
             '"' => self.string(),
-            ch if ch.is_ascii_digit() => self.number(), 
+            ch if ch.is_ascii_digit() => self.number(),
             ch if ch.is_lox_alpha() => self.identifier(),
             EOF_CHAR => Token::eof(self.line_num),
-            _ => Token::error(self.line_num, self.current_lexeme()),
+            _ => self.make_token(TOKEN_ERROR),
         }
     }
 }
@@ -328,33 +363,105 @@ impl Scanner<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-   
+
     #[test]
     fn test_keywords() {
-        let source = "and class else false for fun if nil or print return super this true var while";
+        let source =
+            "and class else false for fun if nil or print return super this true var while";
         let mut scanner = Scanner::new(source);
         let res = vec![
-            Token{ kind: TOKEN_AND, lexeme: "and", line_num: 1 },
-            Token{ kind: TOKEN_CLASS, lexeme: "class", line_num: 1 },
-            Token{ kind: TOKEN_ELSE,lexeme: "else", line_num: 1 },
-            Token{ kind: TOKEN_FALSE,lexeme: "false", line_num: 1 },
-            Token{ kind: TOKEN_FOR,lexeme: "for", line_num: 1 },
-            Token{ kind: TOKEN_FUN,lexeme: "fun", line_num: 1 },
-            Token{ kind: TOKEN_IF,lexeme: "if", line_num: 1 },
-            Token{ kind: TOKEN_NIL,lexeme: "nil", line_num: 1 },
-            Token{ kind: TOKEN_OR,lexeme: "or", line_num: 1 },
-            Token{ kind: TOKEN_PRINT,lexeme: "print", line_num: 1 },
-            Token{ kind: TOKEN_RETURN,lexeme: "return", line_num: 1 },
-            Token{ kind: TOKEN_SUPER,lexeme: "super", line_num: 1 },
-            Token{ kind: TOKEN_THIS,lexeme: "this", line_num: 1 },
-            Token{ kind: TOKEN_TRUE,lexeme: "true", line_num: 1 },
-            Token{ kind: TOKEN_VAR,lexeme: "var", line_num: 1 },
-            Token{ kind: TOKEN_WHILE,lexeme: "while", line_num: 1 },
+            Token {
+                kind: TOKEN_AND,
+                lexeme: "and".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_CLASS,
+                lexeme: "class".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_ELSE,
+                lexeme: "else".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_FALSE,
+                lexeme: "false".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_FOR,
+                lexeme: "for".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_FUN,
+                lexeme: "fun".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_IF,
+                lexeme: "if".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_NIL,
+                lexeme: "nil".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_OR,
+                lexeme: "or".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_PRINT,
+                lexeme: "print".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_RETURN,
+                lexeme: "return".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_SUPER,
+                lexeme: "super".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_THIS,
+                lexeme: "this".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_TRUE,
+                lexeme: "true".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_VAR,
+                lexeme: "var".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_WHILE,
+                lexeme: "while".to_string(),
+                line_num: 1,
+            },
         ];
         for r in res {
             assert_eq!(r, scanner.scan_token());
         }
-        assert_eq!(scanner.scan_token(), Token{ kind: TOKEN_EOF_CHAR,lexeme: "", line_num: 1 });
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                kind: TOKEN_EOF,
+                lexeme: "".to_string(),
+                line_num: 1
+            }
+        );
     }
 
     #[test]
@@ -362,17 +469,61 @@ mod tests {
         let source = "(){};.-+/*,";
         let mut scanner = Scanner::new(source);
         let res = vec![
-            Token{ kind: TOKEN_LEFT_PAREN, lexeme: "(", line_num: 1 },
-            Token{ kind: TOKEN_RIGHT_PAREN, lexeme: ")", line_num: 1 },
-            Token{ kind: TOKEN_LEFT_BRACE, lexeme: "{", line_num: 1 },
-            Token{ kind: TOKEN_RIGHT_BRACE, lexeme: "}", line_num: 1 },
-            Token{ kind: TOKEN_SEMICOLON, lexeme: ";", line_num: 1 },
-            Token{ kind: TOKEN_DOT, lexeme: ".", line_num: 1 },
-            Token{ kind: TOKEN_MINUS, lexeme: "-", line_num: 1 },
-            Token{ kind: TOKEN_PLUS, lexeme: "+", line_num: 1 },
-            Token{ kind: TOKEN_SLASH, lexeme: "/", line_num: 1 },
-            Token{ kind: TOKEN_STAR, lexeme: "*", line_num: 1 },
-            Token{ kind: TOKEN_COMMA, lexeme: ",", line_num: 1 }
+            Token {
+                kind: TOKEN_LEFT_PAREN,
+                lexeme: "(".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_RIGHT_PAREN,
+                lexeme: ")".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_LEFT_BRACE,
+                lexeme: "{".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_RIGHT_BRACE,
+                lexeme: "}".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_SEMICOLON,
+                lexeme: ";".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_DOT,
+                lexeme: ".".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_MINUS,
+                lexeme: "-".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_PLUS,
+                lexeme: "+".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_SLASH,
+                lexeme: "/".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_STAR,
+                lexeme: "*".to_string(),
+                line_num: 1,
+            },
+            Token {
+                kind: TOKEN_COMMA,
+                lexeme: ",".to_string(),
+                line_num: 1,
+            },
         ];
         for r in res {
             assert_eq!(r, scanner.scan_token());
@@ -383,24 +534,59 @@ mod tests {
     fn test_number() {
         let source = "123 123.123";
         let mut scanner = Scanner::new(source);
-        assert_eq!(Token{ kind: TOKEN_NUMBER, lexeme: "123", line_num: 1}, scanner.scan_token());
-        assert_eq!(Token{ kind: TOKEN_NUMBER, lexeme: "123.123", line_num: 1}, scanner.scan_token());
+        assert_eq!(
+            Token {
+                kind: TOKEN_NUMBER,
+                lexeme: "123".to_string(),
+                line_num: 1
+            },
+            scanner.scan_token()
+        );
+        assert_eq!(
+            Token {
+                kind: TOKEN_NUMBER,
+                lexeme: "123.123".to_string(),
+                line_num: 1
+            },
+            scanner.scan_token()
+        );
     }
-    
+
     #[test]
     fn test_identifier() {
         let source = "abc abc_123";
         let mut scanner = Scanner::new(source);
-        assert_eq!(Token{ kind: TOKEN_IDENTIFIER, lexeme: "abc", line_num: 1}, scanner.scan_token());
-        assert_eq!(Token{ kind: TOKEN_IDENTIFIER, lexeme: "abc_123", line_num: 1}, scanner.scan_token());
-     }
+        assert_eq!(
+            Token {
+                kind: TOKEN_IDENTIFIER,
+                lexeme: "abc".to_string(),
+                line_num: 1
+            },
+            scanner.scan_token()
+        );
+        assert_eq!(
+            Token {
+                kind: TOKEN_IDENTIFIER,
+                lexeme: "abc_123".to_string(),
+                line_num: 1
+            },
+            scanner.scan_token()
+        );
+    }
 
     #[test]
     fn test_string() {
         let source = "\"Hello\"";
         let mut scanner = Scanner::new(source);
         let token = scanner.scan_token();
-        assert_eq!(token, Token{ kind: TOKEN_STRING, lexeme: "\"Hello\"", line_num: 1 });
+        assert_eq!(
+            token,
+            Token {
+                kind: TOKEN_STRING,
+                lexeme: "\"Hello\"".to_string(),
+                line_num: 1
+            }
+        );
     }
 
     #[test]

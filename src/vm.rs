@@ -1,7 +1,7 @@
 use crate::chunk::{Chunk, OpCode, Value};
 use crate::debug::disassemble_instruction;
 use crate::compiler::compile;
-use crate::{debugln, Result};
+use crate::debugln;
 
 pub enum InterpretResult {
     INTERPRET_OK,
@@ -55,6 +55,7 @@ impl VM {
     }
 
     fn print_stack(&self) {
+        print!("Current Stack: ");
         for idx in 0..self.stack.top {
             print!("[");
             print!("{}", self.stack.get(idx));
@@ -93,7 +94,9 @@ impl VM {
             let instruction = self.read_byte();
             match OpCode::from(instruction) {
                 OpCode::OP_RETURN => {
-                    println!("{}", self.stack.pop());
+                    if self.stack.top > 0 {
+                        println!("{}", self.stack.pop());
+                    }
                     result = Some(INTERPRET_OK);
                 }
                 OpCode::OP_CONSTANT => {
