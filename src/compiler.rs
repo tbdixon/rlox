@@ -96,9 +96,6 @@ impl Parser<'_> {
     // If we are already at the end this function does nothing
     // so that previous and current tokens are effectively frozen
     // as the last two tokens in the input being parsed.
-    //
-    // Previous is the token that will next emit bytes, current is
-    // the token that is next to be considered.
     fn advance(&mut self) {
         if self.tokens.len() > 0 {
             self.previous = take(&mut self.current);
@@ -150,11 +147,11 @@ impl Parser<'_> {
         } else {
             self.parse_error("Expect expression");
         }
-/*        println!(
-            "Precedence: {:?}. Previous: {:?}. Current: {:?}",
-            precedence, self.previous, self.current
-        );
-*/
+        /*        println!(
+                    "Precedence: {:?}. Previous: {:?}. Current: {:?}",
+                    precedence, self.previous, self.current
+                );
+        */
         while precedence <= self.parse_rules.get_precedence(self.current.kind).unwrap() {
             self.advance();
             if let Some(infix_fn) = self.parse_rules.get_infix(self.previous.kind) {
@@ -330,9 +327,28 @@ pub fn compile(source: &str, chunk: &mut Chunk) -> Result<()> {
     expression(&mut parser);
     parser.consume(TOKEN_EOF, "Expect end of expression");
     parser.emit_byte(OpCode::OP_RETURN as u8, parser.current.line_num);
+    println!("{:?}", parser.chunk);
     if parser.had_error {
         Err(Box::new(ParserError()))
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic_test() {
+        let source = "-(5+(15-3)/4*2)";
+        let mut chunk = Chunk::new();
+        compile(source, &mut chunk).unwrap();
+        let res = Chunk {
+            code: vec![1, 0, 1, 1, 1, 2, 4, 1, 3, 6, 1, 4, 5, 3, 2, 0],
+            lines: vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            constant_pool: vec![5.0, 15.0, 3.0, 4.0, 2.0],
+        };
+        assert_eq!(chunk, res);
     }
 }

@@ -49,7 +49,7 @@ impl From<u8> for OpCode {
 
 pub type Value = f64;
 type ConstantPool = Vec<Value>;
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Chunk {
     pub code: Vec<u8>,
     pub lines: Vec<i32>,
