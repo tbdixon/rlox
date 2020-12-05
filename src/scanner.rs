@@ -167,7 +167,6 @@ impl Token {
     pub fn is_error(&self) -> bool {
         self.kind == TOKEN_ERROR
     }
-
 }
 
 impl Default for Token {
@@ -351,6 +350,38 @@ impl Scanner<'_> {
             '+' => self.make_token(TOKEN_PLUS),
             '/' => self.make_token(TOKEN_SLASH),
             '*' => self.make_token(TOKEN_STAR),
+            '!' => {
+                if self.peek_char() == '=' {
+                    self.advance();
+                    self.make_token(TOKEN_BANG_EQUAL)
+                } else {
+                    self.make_token(TOKEN_BANG)
+                }
+            }
+            '=' => {
+                if self.peek_char() == '=' {
+                    self.advance();
+                    self.make_token(TOKEN_EQUAL_EQUAL)
+                } else {
+                    self.make_token(TOKEN_EQUAL)
+                }
+            }
+            '>' => {
+                if self.peek_char() == '=' {
+                    self.advance();
+                    self.make_token(TOKEN_GREATER_EQUAL)
+                } else {
+                    self.make_token(TOKEN_GREATER)
+                }
+            }
+            '<' => {
+                if self.peek_char() == '=' {
+                    self.advance();
+                    self.make_token(TOKEN_LESS_EQUAL)
+                } else {
+                    self.make_token(TOKEN_LESS)
+                }
+            }
             '"' => self.string(),
             ch if ch.is_ascii_digit() => self.number(),
             ch if ch.is_lox_alpha() => self.identifier(),

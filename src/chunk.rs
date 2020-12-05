@@ -1,6 +1,6 @@
 use strum_macros::EnumIter;
 
-// Type checking makes it (appropriately) trickier to switch between consider an
+// Type checking makes it trickier to switch between consider an
 // OpCode as an enum and a generic byte. Having From implemented solves this in a
 // relatively safe way except for the possibility that the conversion logic is missed
 // since it is manually included. Try to guard against this with an appropriate test.
@@ -14,6 +14,13 @@ pub enum OpCode {
     OP_SUBTRACT,
     OP_MULTIPLY,
     OP_DIVIDE,
+    OP_NIL,
+    OP_TRUE,
+    OP_FALSE,
+    OP_NOT,
+    OP_EQUAL,
+    OP_GREATER,
+    OP_LESS,
     OP_UNKNOWN = 0xFF,
 }
 
@@ -27,7 +34,14 @@ impl From<OpCode> for u8 {
             OpCode::OP_SUBTRACT => 0x4,
             OpCode::OP_MULTIPLY => 0x5,
             OpCode::OP_DIVIDE => 0x6,
-            _ => 0xFF,
+            OpCode::OP_NIL => 0x7,
+            OpCode::OP_TRUE => 0x8,
+            OpCode::OP_FALSE => 0x9,
+            OpCode::OP_NOT => 0xA,
+            OpCode::OP_EQUAL => 0xB,
+            OpCode::OP_GREATER => 0xC,
+            OpCode::OP_LESS => 0xD,
+             _ => 0xFF,
         }
     }
 }
@@ -42,13 +56,27 @@ impl From<u8> for OpCode {
             0x4 => OpCode::OP_SUBTRACT,
             0x5 => OpCode::OP_MULTIPLY,
             0x6 => OpCode::OP_DIVIDE,
+            0x7 => OpCode::OP_NIL,
+            0x8 => OpCode::OP_TRUE,
+            0x9 => OpCode::OP_FALSE,
+            0xA => OpCode::OP_NOT,
+            0xB => OpCode::OP_EQUAL,
+            0xC => OpCode::OP_GREATER,
+            0xD => OpCode::OP_LESS,
             _ => OpCode::OP_UNKNOWN,
         }
     }
 }
 
-pub type Value = f64;
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum Value {
+    Bool(bool),
+    Nil(),
+    Number(f64),
+}
+
 type ConstantPool = Vec<Value>;
+
 #[derive(Debug, PartialEq)]
 pub struct Chunk {
     pub code: Vec<u8>,

@@ -1,7 +1,7 @@
 use crate::chunk::{Chunk, OpCode, Value};
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
-use crate::Result;
+use crate::{debugln, Result};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -93,19 +93,23 @@ impl Parser<'_> {
     }
 
     // This handles looping through the list of scanned tokens.
-    // If we are already at the end this function does nothing
-    // so that previous and current tokens are effectively frozen
-    // as the last two tokens in the input being parsed.
+    //
+    // If we are out of tokens but in the middle of compiling
+    // an expression that is an error.
     fn advance(&mut self) {
         if self.tokens.len() > 0 {
             self.previous = take(&mut self.current);
             self.current = self.tokens.pop().unwrap_or(Token::error(
                 self.previous.line_num,
-                "Error encountered while parsing".to_string(),
+                "Error encountered while compiling".to_string(),
             ));
             if self.current.is_error() {
-                self.parse_error("Error encountered while parsing");
+                self.parse_error("Error encountered while compiling");
             }
+        } else {
+            self.parse_error("Unexpected EOF while compiling");
+            //TODO: Handle this error more gracefully, panic! for now to avoid stack overflow
+            panic!("Unexpected EOF while compiling");
         }
     }
 
@@ -116,6 +120,12 @@ impl Parser<'_> {
         if self.current.kind == expected {
             self.advance();
         } else {
+            self.parse_error(msg);
+        }
+    }
+
+    fn check(&mut self, expected: TokenType, msg: &'static str) {
+        if self.current.kind != expected {
             self.parse_error(msg);
         }
     }
@@ -147,10 +157,10 @@ impl Parser<'_> {
         } else {
             self.parse_error("Expect expression");
         }
-        /*        println!(
-                    "Precedence: {:?}. Previous: {:?}. Current: {:?}",
-                    precedence, self.previous, self.current
-                );
+        /*        debugln!(
+                     "Precedence: {:?}. Previous: {:?}. Current: {:?}",
+                     precedence, self.previous, self.current
+                 );
         */
         while precedence <= self.parse_rules.get_precedence(self.current.kind).unwrap() {
             self.advance();
@@ -188,9 +198,9 @@ fn binary(parser: &mut Parser) {
     }
 }
 fn number(parser: &mut Parser) {
-    match parser.previous.lexeme.parse::<Value>() {
+    match parser.previous.lexeme.parse::<f64>() {
         Ok(constant_value) => {
-            parser.emit_constant(constant_value);
+            parser.emit_constant(Value::Number(constant_value));
         }
         Err(_) => {
             parser.parse_error("Error parsing number");
@@ -208,7 +218,18 @@ fn unary(parser: &mut Parser) {
     parser.parse_precedence(PREC_UNARY);
     match op {
         TOKEN_MINUS => parser.emit_byte(OpCode::OP_NEGATE as u8, op_line),
+        TOKEN_BANG => parser.emit_byte(OpCode::OP_NOT as u8, op_line),
         _ => parser.parse_error("Invalid unary operator"),
+    }
+}
+
+fn literal(parser: &mut Parser) {
+    let op_line = parser.previous.line_num;
+    match parser.previous.kind {
+        TOKEN_FALSE => parser.emit_byte(OpCode::OP_FALSE as u8, op_line),
+        TOKEN_TRUE => parser.emit_byte(OpCode::OP_TRUE as u8, op_line),
+        TOKEN_NIL => parser.emit_byte(OpCode::OP_NIL as u8, op_line),
+        _ => {}
     }
 }
 
@@ -279,6 +300,38 @@ impl ParseRules {
             },
         );
         rules.0.insert(
+            TOKEN_FALSE,
+            ParseRule {
+                precedence: PREC_NONE,
+                prefix: Some(&literal),
+                infix: None,
+            },
+        );
+        rules.0.insert(
+            TOKEN_TRUE,
+            ParseRule {
+                precedence: PREC_NONE,
+                prefix: Some(&literal),
+                infix: None,
+            },
+        );
+        rules.0.insert(
+            TOKEN_BANG,
+            ParseRule {
+                precedence: PREC_NONE,
+                prefix: Some(&unary),
+                infix: None,
+            },
+        );
+        rules.0.insert(
+            TOKEN_NIL,
+            ParseRule {
+                precedence: PREC_NONE,
+                prefix: Some(&literal),
+                infix: None,
+            },
+        );
+        rules.0.insert(
             TOKEN_RIGHT_PAREN,
             ParseRule {
                 precedence: PREC_NONE,
@@ -325,9 +378,14 @@ pub fn compile(source: &str, chunk: &mut Chunk) -> Result<()> {
     let mut parser = Parser::new(tokens, chunk, ParseRules::new());
     parser.advance();
     expression(&mut parser);
-    parser.consume(TOKEN_EOF, "Expect end of expression");
+    parser.check(TOKEN_EOF, "Expect end of expression");
     parser.emit_byte(OpCode::OP_RETURN as u8, parser.current.line_num);
-    println!("{:?}", parser.chunk);
+    if crate::DEBUG {
+        for op_code in &parser.chunk.code {
+            println!("{:?}", OpCode::from(*op_code));
+        }
+        println!("Constants: {:?}", parser.chunk.constant_pool);
+    }
     if parser.had_error {
         Err(Box::new(ParserError()))
     } else {
@@ -347,7 +405,13 @@ mod tests {
         let res = Chunk {
             code: vec![1, 0, 1, 1, 1, 2, 4, 1, 3, 6, 1, 4, 5, 3, 2, 0],
             lines: vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-            constant_pool: vec![5.0, 15.0, 3.0, 4.0, 2.0],
+            constant_pool: vec![
+                Value::Number(5.0),
+                Value::Number(15.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
+                Value::Number(2.0),
+            ],
         };
         assert_eq!(chunk, res);
     }

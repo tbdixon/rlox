@@ -20,6 +20,13 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::OP_SUBTRACT => simple_instruction(OpCode::OP_SUBTRACT, offset),
         OpCode::OP_MULTIPLY => simple_instruction(OpCode::OP_MULTIPLY, offset),
         OpCode::OP_DIVIDE => simple_instruction(OpCode::OP_DIVIDE, offset),
+        OpCode::OP_NIL => simple_instruction(OpCode::OP_NIL, offset),
+        OpCode::OP_TRUE => simple_instruction(OpCode::OP_TRUE, offset),
+        OpCode::OP_FALSE => simple_instruction(OpCode::OP_FALSE, offset),
+        OpCode::OP_NOT => simple_instruction(OpCode::OP_NOT, offset),
+        OpCode::OP_EQUAL => simple_instruction(OpCode::OP_EQUAL, offset),
+        OpCode::OP_GREATER => simple_instruction(OpCode::OP_GREATER, offset),
+        OpCode::OP_LESS => simple_instruction(OpCode::OP_LESS, offset),
         OpCode::OP_UNKNOWN => {
             debugln!("Unknown Opcode Encountered");
             offset + 1
@@ -36,9 +43,9 @@ pub fn simple_instruction(op_code: OpCode, offset: usize) -> usize {
 pub fn constant_instruction(op_code: OpCode, chunk: &Chunk, offset: usize) -> usize {
     let binary_code: u8 = op_code.into();
     let constant_addr: usize = chunk.code[offset + 1] as usize;
-    let constant_val: f64 = chunk.constant_pool[constant_addr];
+    let constant_val = &chunk.constant_pool[constant_addr];
     debugln!(
-        "{:?} ({:#04X?})\t{:#04X?}\t{} ",
+        "{:?} ({:#04X?})\t{:#04X?}\t{:?} ",
         op_code,
         binary_code,
         constant_addr,
