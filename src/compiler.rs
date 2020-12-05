@@ -1,7 +1,7 @@
 use crate::chunk::{Chunk, OpCode, Value};
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
-use crate::{debugln, Result};
+use crate::Result;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -186,6 +186,8 @@ fn binary(parser: &mut Parser) {
     let precedence = match op {
         TOKEN_PLUS | TOKEN_MINUS => PREC_TERM,
         TOKEN_STAR | TOKEN_SLASH => PREC_FACTOR,
+        TOKEN_EQUAL_EQUAL | TOKEN_BANG_EQUAL => PREC_EQUALITY,
+        TOKEN_GREATER | TOKEN_LESS | TOKEN_GREATER_EQUAL | TOKEN_LESS_EQUAL => PREC_COMPARISON,
         _ => PREC_NONE,
     };
     parser.parse_precedence(Precedence::from_u8(precedence as u8 + 1));
@@ -194,6 +196,16 @@ fn binary(parser: &mut Parser) {
         TOKEN_MINUS => parser.emit_byte(OpCode::OP_SUBTRACT as u8, op_line),
         TOKEN_STAR => parser.emit_byte(OpCode::OP_MULTIPLY as u8, op_line),
         TOKEN_SLASH => parser.emit_byte(OpCode::OP_DIVIDE as u8, op_line),
+        TOKEN_EQUAL_EQUAL => parser.emit_byte(OpCode::OP_EQUAL as u8, op_line),
+        TOKEN_BANG_EQUAL => {
+            parser.emit_bytes(OpCode::OP_EQUAL as u8, OpCode::OP_NOT as u8, op_line)
+        }
+        TOKEN_GREATER => parser.emit_byte(OpCode::OP_GREATER as u8, op_line),
+        TOKEN_LESS => parser.emit_byte(OpCode::OP_LESS as u8, op_line),
+        TOKEN_GREATER_EQUAL => {
+            parser.emit_bytes(OpCode::OP_LESS as u8, OpCode::OP_NOT as u8, op_line)
+        }
+        TOKEN_LESS_EQUAL => parser.emit_bytes(OpCode::OP_GREATER as u8, OpCode::OP_NOT as u8, op_line),
         _ => parser.parse_error("Invalid binary operator"),
     }
 }
@@ -339,6 +351,54 @@ impl ParseRules {
                 infix: None,
             },
         );
+        rules.0.insert(
+            TOKEN_EQUAL_EQUAL,
+            ParseRule {
+                precedence: PREC_EQUALITY,
+                prefix: None,
+                infix: Some(&binary),
+            },
+        );
+        rules.0.insert(
+            TOKEN_BANG_EQUAL,
+            ParseRule {
+                precedence: PREC_EQUALITY,
+                prefix: None,
+                infix: Some(&binary),
+            },
+        );
+        rules.0.insert(
+            TOKEN_GREATER,
+            ParseRule {
+                precedence: PREC_COMPARISON,
+                prefix: None,
+                infix: Some(&binary),
+            },
+        );
+        rules.0.insert(
+            TOKEN_LESS,
+            ParseRule {
+                precedence: PREC_COMPARISON,
+                prefix: None,
+                infix: Some(&binary),
+            },
+        );
+        rules.0.insert(
+            TOKEN_GREATER_EQUAL,
+            ParseRule {
+                precedence: PREC_COMPARISON,
+                prefix: None,
+                infix: Some(&binary),
+            },
+        );
+        rules.0.insert(
+            TOKEN_LESS_EQUAL,
+            ParseRule {
+                precedence: PREC_COMPARISON,
+                prefix: None,
+                infix: Some(&binary),
+            },
+        );
         rules
     }
 
@@ -380,12 +440,12 @@ pub fn compile(source: &str, chunk: &mut Chunk) -> Result<()> {
     expression(&mut parser);
     parser.check(TOKEN_EOF, "Expect end of expression");
     parser.emit_byte(OpCode::OP_RETURN as u8, parser.current.line_num);
-    if crate::DEBUG {
+    /*if crate::DEBUG {
         for op_code in &parser.chunk.code {
             println!("{:?}", OpCode::from(*op_code));
         }
         println!("Constants: {:?}", parser.chunk.constant_pool);
-    }
+    }*/
     if parser.had_error {
         Err(Box::new(ParserError()))
     } else {

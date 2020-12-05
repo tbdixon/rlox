@@ -2,6 +2,7 @@ use crate::chunk::{Chunk, OpCode, Value};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
+use std::mem::discriminant;
 
 type Result<T> = std::result::Result<T, InterpretResult>;
 
@@ -150,6 +151,39 @@ impl VM {
         })
     }
 
+    fn equal(&mut self) -> Result<InterpretResult> {
+        let right = self.stack.pop();
+        let left = self.stack.pop();
+        self.push(Value::Bool(
+            discriminant(&left) == discriminant(&right) && left == right,
+        ))  
+    }
+
+    fn greater(&mut self) -> Result<InterpretResult> {
+        let right = self.stack.pop();
+        let left = self.stack.pop();
+        match (left, right) {
+            (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(left > right)),
+            _ => {
+                return Err(INTERPRET_RUNTIME_ERROR(
+                    "Comparison operands must be numbers.",
+                ))
+            }
+        }
+    }
+    fn less(&mut self) -> Result<InterpretResult> {
+        let right = self.stack.pop();
+        let left = self.stack.pop();
+        match (left, right) {
+            (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(left < right)),
+            _ => {
+                return Err(INTERPRET_RUNTIME_ERROR(
+                    "Comparison operands must be numbers.",
+                ))
+            }
+        }
+    }
+
     fn push(&mut self, val: Value) -> Result<InterpretResult> {
         self.stack.push(val);
         Ok(INTERPRET_OK)
@@ -199,10 +233,10 @@ impl VM {
                 OpCode::OP_TRUE => self.push(Value::Bool(true)),
                 OpCode::OP_FALSE => self.push(Value::Bool(false)),
                 OpCode::OP_NOT => self.not(),
-                //                OpCode::OP_EQUAL => simple_instruction(OpCode::OP_EQUAL, offset),
-                //                OpCode::OP_GREATER => simple_instruction(OpCode::OP_GREATER, offset),
-                //                OpCode::OP_LESS => simple_instruction(OpCode::OP_LESS, offset),
-                OpCode::OP_UNKNOWN | _ => Err(INTERPRET_COMPILE_ERROR),
+                OpCode::OP_EQUAL => self.equal(),
+                OpCode::OP_GREATER => self.greater(),
+                OpCode::OP_LESS => self.less(),
+                OpCode::OP_UNKNOWN => Err(INTERPRET_COMPILE_ERROR),
             }?;
         }
     }
