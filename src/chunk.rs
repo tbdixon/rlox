@@ -68,11 +68,12 @@ impl From<u8> for OpCode {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     Bool(bool),
     Nil(),
     Number(f64),
+    Str(String),
 }
 
 type ConstantPool = Vec<Value>;

@@ -245,6 +245,12 @@ fn literal(parser: &mut Parser) {
     }
 }
 
+fn string(parser: &mut Parser) {
+    let lexeme = &parser.previous.lexeme;
+    let string = String::from(&lexeme[1..lexeme.len()-1]);
+    parser.emit_constant(Value::Str(string));
+}
+
 struct ParseRule {
     precedence: Precedence,
     prefix: Option<&'static dyn Fn(&mut Parser)>,
@@ -397,6 +403,14 @@ impl ParseRules {
                 precedence: PREC_COMPARISON,
                 prefix: None,
                 infix: Some(&binary),
+            },
+        ); 
+         rules.0.insert(
+            TOKEN_STRING,
+            ParseRule {
+                precedence: PREC_NONE,
+                prefix: Some(&string),
+                infix: None,
             },
         );
         rules

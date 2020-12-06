@@ -19,39 +19,17 @@ impl InterpretResult {
     }
 }
 
-const MAX_STACK_SIZE: usize = 256;
-pub struct Stack {
-    pub stack: [Value; MAX_STACK_SIZE],
-    top: usize,
-}
-
-impl Stack {
-    fn new() -> Stack {
-        Stack {
-            stack: [Value::Nil(); MAX_STACK_SIZE],
-            top: 0,
-        }
-    }
-
-    fn get(&self, idx: usize) -> Value {
-        self.stack[idx]
-    }
-
-    fn push(&mut self, val: Value) {
-        self.stack[self.top] = val;
-        self.top += 1;
-    }
-
-    fn pop(&mut self) -> Value {
-        self.top -= 1;
-        self.stack[self.top]
-    }
-}
-
+// TODO
+//const MAX_STACK_SIZE: usize = 256;
+// 1/ Sort out how to limit size of stack when it is a Vec
+// 2/ Is using unwrap() acceptable on Vec operations here since a None
+// would imply stack over/underflow or other such error? What's the best way
+// to more gracefully handle this result and return a runtime error?
+// 3/ Do I need to manually call drop() ever on elements of the stack?
 pub struct VM {
     pub chunk: Chunk,
     pub ip: usize,
-    pub stack: Stack,
+    pub stack: Vec<Value>,
 }
 
 use crate::vm::InterpretResult::*;
@@ -59,21 +37,16 @@ impl VM {
     pub fn new() -> VM {
         VM {
             chunk: Chunk::new(),
+            stack: Vec::new(), 
             ip: 0,
-            stack: Stack::new(),
         }
     }
 
-    pub fn reset(&mut self) {
-        self.chunk = Chunk::new();
-        self.ip = 0;
-        self.stack = Stack::new();
-    }
     fn print_stack(&self) {
         print!("Current Stack: ");
-        for idx in 0..self.stack.top {
+        for val in &self.stack {
             print!("[");
-            print!("{:?}", self.stack.get(idx));
+            print!("{:?}", val);
             print!("]");
         }
         println!();
@@ -85,11 +58,14 @@ impl VM {
     }
 
     fn binary_add(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop();
-        let left = self.stack.pop();
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left + right))
+            }
+            (Value::Str(left), Value::Str(right)) => {
+                self.stack.push(Value::Str(left+&right))
             }
             (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Operators must be numbers")),
         };
@@ -97,8 +73,8 @@ impl VM {
     }
 
     fn binary_sub(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop();
-        let left = self.stack.pop();
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left - right))
@@ -109,8 +85,8 @@ impl VM {
     }
 
     fn binary_mult(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop();
-        let left = self.stack.pop();
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left * right))
@@ -121,8 +97,8 @@ impl VM {
     }
 
     fn binary_div(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop();
-        let left = self.stack.pop();
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left / right))
@@ -133,7 +109,7 @@ impl VM {
     }
 
     fn negate(&mut self) -> Result<InterpretResult> {
-        let val = self.stack.pop();
+        let val = self.stack.pop().unwrap();
         match val {
             Value::Number(val) => self.stack.push(Value::Number(-val)),
             Value::Nil() => self.stack.push(val),
@@ -143,7 +119,7 @@ impl VM {
     }
 
     fn not(&mut self) -> Result<InterpretResult> {
-        let val = self.stack.pop();
+        let val = self.stack.pop().unwrap();
         self.push(match val {
             Value::Nil() => Value::Bool(true),
             Value::Bool(bool) => Value::Bool(!bool),
@@ -152,16 +128,16 @@ impl VM {
     }
 
     fn equal(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop();
-        let left = self.stack.pop();
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         self.push(Value::Bool(
             discriminant(&left) == discriminant(&right) && left == right,
         ))  
     }
 
     fn greater(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop();
-        let left = self.stack.pop();
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(left > right)),
             _ => {
@@ -172,8 +148,8 @@ impl VM {
         }
     }
     fn less(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop();
-        let left = self.stack.pop();
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(left < right)),
             _ => {
@@ -206,7 +182,7 @@ impl VM {
         debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
         loop {
             if crate::DEBUG {
-                if self.stack.top > 0 {
+                if !self.stack.is_empty() {
                     self.print_stack();
                 }
                 disassemble_instruction(&self.chunk, self.ip);
@@ -214,14 +190,15 @@ impl VM {
             let instruction = self.read_byte();
             match OpCode::from(instruction) {
                 OpCode::OP_RETURN => {
-                    if self.stack.top > 0 {
+                    if !self.stack.is_empty() {
                         println!("{:?}", self.stack.pop());
                     }
                     return Ok(INTERPRET_OK);
                 }
                 OpCode::OP_CONSTANT => {
                     let constant_addr: usize = self.read_byte() as usize;
-                    self.stack.push(self.chunk.constant_pool[constant_addr]);
+                    let constant = self.chunk.constant_pool[constant_addr].clone();
+                    self.stack.push(constant);
                     Ok(INTERPRET_OK)
                 }
                 OpCode::OP_NEGATE => self.negate(),
