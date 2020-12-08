@@ -34,5 +34,6 @@ fn repl() -> Result<()> {
         io::stdout().flush()?;
         io::stdin().read_line(&mut line)?;
         vm.interpret(&line[..]);
+        vm.reset_repl();
     }
 }

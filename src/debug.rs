@@ -9,6 +9,7 @@ pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     while offset < chunk.code.len() {
         offset = disassemble_instruction(&chunk, offset);
     }
+    debugln!("== {} ==", name);
 }
 
 pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {

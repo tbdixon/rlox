@@ -1,7 +1,8 @@
 use crate::chunk::OpCode::*;
-use crate::chunk::{Chunk, Value};
+use crate::chunk::{Chunk, Value, };
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
+use crate::debug::disassemble_chunk;
 use crate::Result;
 use std::collections::HashMap;
 use std::error::Error;
@@ -409,13 +410,12 @@ impl ParseRules {
 pub fn compile(source: &str, chunk: &mut Chunk) -> Result<()> {
     let tokens = Scanner::new(source.trim()).scan();
     let mut parser = Parser::new(tokens, chunk, ParseRules::new());
-    //println!("{:?}", parser.tokens);
     parser.advance();
     while parser.current.kind != TOKEN_EOF {
         declaration(&mut parser);
     }
     parser.emit_byte(OP_RETURN as u8, parser.current.line_num);
-    println!("{:?}", parser.chunk);
+    disassemble_chunk(parser.chunk, "Compiling Complete");
     if parser.had_error {
         Err(Box::new(CompilerError()))
     } else {

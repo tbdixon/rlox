@@ -46,9 +46,15 @@ impl VM {
         }
     }
 
+    pub fn reset_repl(&mut self) {
+        self.chunk = Chunk::new();
+        self.stack = Vec::new();
+        self.ip = 0;
+    }
+
     fn print_stack(&self) {
         if !self.stack.is_empty() {
-            print!("Current Stack: ");
+            print!("Stack: ");
             for val in &self.stack {
                 print!("[");
                 print!("{:?}", val);
@@ -59,7 +65,7 @@ impl VM {
     }
 
     fn print_globals(&self) {
-        println!("{:?}", self.globals);
+        println!("Globals: {:?}", self.globals);
     }
 
     fn read_byte(&mut self) -> u8 {
@@ -241,6 +247,7 @@ impl VM {
         debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
         loop {
             if crate::DEBUG {
+                println!("-----------------------------------------------------------------");
                 self.print_stack();
                 self.print_globals();
                 disassemble_instruction(&self.chunk, self.ip);
