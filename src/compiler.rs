@@ -44,11 +44,11 @@ impl Precedence {
 }
 
 #[derive(Debug)]
-struct ParserError();
-impl Error for ParserError {}
-impl fmt::Display for ParserError {
+struct CompilerError();
+impl Error for CompilerError {}
+impl fmt::Display for CompilerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Error parsing input source")
+        write!(f, "Error compiling input source")
     }
 }
 
@@ -109,8 +109,6 @@ impl Parser<'_> {
             }
         } else {
             self.parse_error("Unexpected EOF while compiling");
-            //TODO: Handle this error more gracefully, panic! for now to avoid stack overflow
-            panic!("Unexpected EOF while compiling");
         }
     }
 
@@ -125,26 +123,14 @@ impl Parser<'_> {
         }
     }
 
+    // Similar to consume, but is not an error if the token does not 
+    // match.
     fn match_token(&mut self, expected: TokenType) -> bool {
         if self.current.kind == expected {
             self.advance();
             return true;
         }
         return false;
-    }
-
-    fn current_is(&self, expected: TokenType) -> bool {
-        self.current.kind == expected
-    }
-
-    fn previous_is(&self, expected: TokenType) -> bool {
-        self.previous.kind == expected
-    }
-
-    fn check(&mut self, expected: TokenType, msg: &'static str) {
-        if self.current.kind != expected {
-            self.parse_error(msg);
-        }
     }
 
     // Functions to handle "emitting" values which writes them to the chunk
@@ -164,6 +150,22 @@ impl Parser<'_> {
         const_idx
     }
 
+    // Play forward until a statement so we can try to being compilation again there.
+    fn synchronize(&mut self) {
+        self.panic_mode = false;
+        while self.current.kind != TOKEN_EOF {
+            if self.previous.kind == TOKEN_SEMICOLON {
+                break;
+            }
+            else {
+                self.advance();
+            }
+        }
+    }
+       
+    // The magic function that handles everything. Parses the specific prefix function
+    // for the previous token and then parses the following as infix expressions
+    // if they are greater than or equal precedence. 
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
         if let Some(prefix_fn) = self.parse_rules.get_prefix(self.previous.kind) {
@@ -185,6 +187,11 @@ impl Parser<'_> {
     }
 }
 
+/*----------------------------------------------------------------------*/
+/*----------------------------------------------------------------------*/
+/* Functions that are used in the Parse Precedence map and called to 
+ * actually compile the source code with a mutable refernce to the parser
+ */
 fn grouping(parser: &mut Parser) {
     expression(parser);
     parser.consume(TOKEN_RIGHT_PAREN, "Expect closing ')'");
@@ -238,6 +245,12 @@ fn declaration(parser: &mut Parser) {
         var_declaration(parser);
     } else {
         statement(parser);
+    }
+    // If we hit an error parsing, synchronize to the next valid point. 
+    // The execution will not happen but this enables compilation to continue
+    // so we grab any additional errors. 
+    if parser.panic_mode {
+        parser.synchronize();
     }
 }
 
@@ -313,6 +326,14 @@ fn string(parser: &mut Parser) {
     parser.emit_constant(Value::Str(string));
 }
 
+/*----------------------------------------------------------------------*/
+/*----------------------------------------------------------------------*/
+
+/* A struct used to store the parse rules and precedence for each of the 
+ * tokens in the Lox language. This wraps a map so that the Pratt parser
+ * can call the appropriate function when it encounters a given token
+ * as a prefix or infix. 
+*/
 struct ParseRule {
     precedence: Precedence,
     prefix: Option<&'static dyn Fn(&mut Parser)>,
@@ -348,8 +369,8 @@ impl ParseRules {
         rules.0.insert(TOKEN_LESS_EQUAL,    ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
 
         rules.0.insert(TOKEN_STRING,        ParseRule {precedence: PREC_NONE,       prefix: Some(&string),  infix: None});
-        rules.0.insert(TOKEN_EQUAL,         ParseRule {precedence: PREC_ASSIGNMENT, prefix: None,           infix: None});
-        rules.0.insert(TOKEN_VAR,           ParseRule {precedence: PREC_ASSIGNMENT, prefix: None,           infix: None});
+        rules.0.insert(TOKEN_EQUAL,         ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
+        rules.0.insert(TOKEN_VAR,           ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
         rules.0.insert(TOKEN_IDENTIFIER,    ParseRule {precedence: PREC_NONE,       prefix: Some(&identifier), infix: None});
         rules
     }
@@ -388,15 +409,15 @@ impl ParseRules {
 pub fn compile(source: &str, chunk: &mut Chunk) -> Result<()> {
     let tokens = Scanner::new(source.trim()).scan();
     let mut parser = Parser::new(tokens, chunk, ParseRules::new());
-    println!("{:?}", parser.tokens);
+    //println!("{:?}", parser.tokens);
     parser.advance();
-    while !parser.current_is(TOKEN_EOF) {
+    while parser.current.kind != TOKEN_EOF {
         declaration(&mut parser);
     }
     parser.emit_byte(OP_RETURN as u8, parser.current.line_num);
     println!("{:?}", parser.chunk);
     if parser.had_error {
-        Err(Box::new(ParserError()))
+        Err(Box::new(CompilerError()))
     } else {
         Ok(())
     }
@@ -408,12 +429,12 @@ mod tests {
 
     #[test]
     fn basic_test() {
-        let source = "-(5+(15-3)/4*2)";
+        let source = "-(5+(15-3)/4*2);";
         let mut chunk = Chunk::new();
         compile(source, &mut chunk).unwrap();
         let res = Chunk {
-            code: vec![1, 0, 1, 1, 1, 2, 4, 1, 3, 6, 1, 4, 5, 3, 2, 0],
-            lines: vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            code: vec![1, 0, 1, 1, 1, 2, 4, 1, 3, 6, 1, 4, 5, 3, 2, 14, 0],
+            lines: vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             constant_pool: vec![
                 Value::Number(5.0),
                 Value::Number(15.0),
