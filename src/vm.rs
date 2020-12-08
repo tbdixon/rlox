@@ -4,7 +4,8 @@ use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
 use std::collections::HashMap;
-use std::mem::discriminant;
+use std::mem::{discriminant, MaybeUninit, replace};
+use std::ops::{Index};
 
 type Result<T> = std::result::Result<T, InterpretResult>;
 
@@ -21,17 +22,58 @@ impl InterpretResult {
     }
 }
 
-// TODO
-//const MAX_STACK_SIZE: usize = 256;
-// 1/ Sort out how to limit size of stack when it is a Vec
-// 2/ Is using unwrap() acceptable on Vec operations here since a None
-// would imply stack over/underflow or other such error? What's the best way
-// to more gracefully handle this result and return a runtime error?
-// 3/ Do I need to manually call drop() ever on elements of the stack?
+// Build our own stack so that we can use a small stack allocated bit of space
+// rather than a Vec which will continually be allocating around the heap 
+// given this is the core element of our VM. 
+const MAX_STACK_SIZE: usize = 256;
+pub struct Stack {
+    top: usize,
+    stack: [Option<Value>; MAX_STACK_SIZE],
+}
+
+impl Stack {
+    fn new() -> Stack {
+        // Some fun unsafe rust to initialize a constant array of Option<Value> given the 
+        // String inside Value precludes simple Copy trait. This should avoid any problematic
+        // behavior as the stack is immedietly being set to None and then used as normal.
+        let stack = unsafe {
+            let mut s = MaybeUninit::<[Option<Value>; MAX_STACK_SIZE]>::uninit();
+            let p = s.as_mut_ptr() as *mut Option<Value>;
+            for offset in 0..MAX_STACK_SIZE as isize {
+                std::ptr::write(p.offset(offset), None);
+            }
+            s.assume_init()
+        };
+        Stack { top: 0, stack }
+    }
+    
+    fn is_empty(&self) -> bool {
+        self.top == 0
+    }
+
+    fn pop(&mut self) -> Result<Value> {
+        self.top -= 1;
+        replace(&mut self.stack[self.top], None).ok_or_else(|| INTERPRET_RUNTIME_ERROR("Empty stack"))
+    }
+
+    fn push(&mut self, v: Value) {
+        self.stack[self.top] = Some(v);
+        self.top += 1;
+    }
+}
+
+impl Index<usize> for Stack {
+    type Output = Option<Value>;
+    
+    fn index(&self, i: usize) -> &Option<Value> {
+        &self.stack[i]
+    }
+}
+
 pub struct VM {
     pub chunk: Chunk,
     pub ip: usize,
-    pub stack: Vec<Value>,
+    pub stack: Stack,
     pub globals: HashMap<String, Value>,
 }
 
@@ -40,24 +82,25 @@ impl VM {
     pub fn new() -> VM {
         VM {
             chunk: Chunk::new(),
-            stack: Vec::new(),
+            stack: Stack::new(),
             globals: HashMap::new(),
             ip: 0,
         }
     }
 
+    // TODO: Do I need to manually call drop() ever on elements of the stack?
     pub fn reset_repl(&mut self) {
         self.chunk = Chunk::new();
-        self.stack = Vec::new();
+        self.stack = Stack::new();
         self.ip = 0;
     }
 
     fn print_stack(&self) {
         if !self.stack.is_empty() {
-            print!("Stack: ");
-            for val in &self.stack {
+            print!("Stack top {}: ", self.stack.top);
+            for idx in 0..self.stack.top {
                 print!("[");
-                print!("{:?}", val);
+                print!("{:?}", self.stack[idx]);
                 print!("]");
             }
             println!();
@@ -73,17 +116,9 @@ impl VM {
         self.chunk.code[self.ip - 1]
     }
 
-    // Simple helper to easily use the '?' throughout the VM for some clutter cleanup
-    // and error consolidation.
-    fn pop_stack(&mut self) -> Result<Value> {
-        self.stack
-            .pop()
-            .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Empty stack"))
-    }
-
     fn binary_add(&mut self) -> Result<InterpretResult> {
-        let right = self.pop_stack()?;
-        let left = self.pop_stack()?;
+        let right = self.stack.pop()?;
+        let left = self.stack.pop()?;
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left + right))
@@ -95,8 +130,8 @@ impl VM {
     }
 
     fn binary_sub(&mut self) -> Result<InterpretResult> {
-        let right = self.pop_stack()?;
-        let left = self.pop_stack()?;
+        let right = self.stack.pop()?;
+        let left = self.stack.pop()?;
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left - right))
@@ -107,8 +142,8 @@ impl VM {
     }
 
     fn binary_mult(&mut self) -> Result<InterpretResult> {
-        let right = self.pop_stack()?;
-        let left = self.pop_stack()?;
+        let right = self.stack.pop()?;
+        let left = self.stack.pop()?;
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left * right))
@@ -119,8 +154,8 @@ impl VM {
     }
 
     fn binary_div(&mut self) -> Result<InterpretResult> {
-        let right = self.pop_stack()?;
-        let left = self.pop_stack()?;
+        let right = self.stack.pop()?;
+        let left = self.stack.pop()?;
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left / right))
@@ -131,7 +166,7 @@ impl VM {
     }
 
     fn negate(&mut self) -> Result<InterpretResult> {
-        let val = self.pop_stack()?;
+        let val = self.stack.pop()?;
         match val {
             Value::Number(val) => self.stack.push(Value::Number(-val)),
             Value::Nil() => self.stack.push(val),
@@ -141,7 +176,7 @@ impl VM {
     }
 
     fn not(&mut self) -> Result<InterpretResult> {
-        let val = self.pop_stack()?;
+        let val = self.stack.pop()?;
         self.push(match val {
             Value::Nil() => Value::Bool(true),
             Value::Bool(bool) => Value::Bool(!bool),
@@ -150,16 +185,16 @@ impl VM {
     }
 
     fn equal(&mut self) -> Result<InterpretResult> {
-        let right = self.pop_stack()?;
-        let left = self.pop_stack()?;
+        let right = self.stack.pop()?;
+        let left = self.stack.pop()?;
         self.push(Value::Bool(
             discriminant(&left) == discriminant(&right) && left == right,
         ))
     }
 
     fn greater(&mut self) -> Result<InterpretResult> {
-        let right = self.pop_stack()?;
-        let left = self.pop_stack()?;
+        let right = self.stack.pop()?;
+        let left = self.stack.pop()?;
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(left > right)),
             _ => {
@@ -170,8 +205,8 @@ impl VM {
         }
     }
     fn less(&mut self) -> Result<InterpretResult> {
-        let right = self.pop_stack()?;
-        let left = self.pop_stack()?;
+        let right = self.stack.pop()?;
+        let left = self.stack.pop()?;
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(left < right)),
             _ => {
@@ -188,12 +223,12 @@ impl VM {
     }
 
     fn print(&mut self) -> Result<InterpretResult> {
-        println!("{}", self.pop_stack()?);
+        println!("{}", self.stack.pop()?);
         Ok(INTERPRET_OK)
     }
 
     fn get_variable_name(&mut self) -> Result<String> {
-        match self.pop_stack()? {
+        match self.stack.pop()? {
             Value::Str(v) => Ok(v),
             Value::Nil() | Value::Number(_) | Value::Bool(_) => {
                 return Err(INTERPRET_RUNTIME_ERROR("Variable name must be a Str"));
@@ -212,15 +247,14 @@ impl VM {
     }
 
     fn define_global(&mut self) -> Result<InterpretResult> {
-        let init_val = self.pop_stack()?;
+        let init_val = self.stack.pop()?;
         let var_name = self.get_variable_name()?;
         self.globals.insert(var_name, init_val);
         Ok(INTERPRET_OK)
     }
 
     fn set_global(&mut self) -> Result<InterpretResult> {
-        //TODO: Verify order of pop operations here.
-        let val = self.pop_stack()?;
+        let val = self.stack.pop()?;
         let var_name = self.get_variable_name()?;
         if self.globals.contains_key(&var_name) {
             self.globals.insert(var_name, val);

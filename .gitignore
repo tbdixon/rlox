@@ -4,6 +4,7 @@ target
 !/**/src/**/target/
 *.vi
 *.swp
+*.lox
 
 .DS_Store
 

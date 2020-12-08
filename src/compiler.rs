@@ -169,8 +169,9 @@ impl Parser<'_> {
     // if they are greater than or equal precedence. 
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
+        let can_assign = precedence <= PREC_ASSIGNMENT;
         if let Some(prefix_fn) = self.parse_rules.get_prefix(self.previous.kind) {
-            prefix_fn(self);
+            prefix_fn(self, can_assign);
         } else {
             println!("{:?}", self.previous);
             self.parse_error("Expect expression for prefix");
@@ -185,62 +186,15 @@ impl Parser<'_> {
                 self.parse_error("Expect expression for infix");
             }
         }
+        if can_assign && self.match_token(TOKEN_EQUAL) {
+            self.parse_error("Invalid assignment target.");
+        }
     }
 }
 
-/*----------------------------------------------------------------------*/
-/*----------------------------------------------------------------------*/
-/* Functions that are used in the Parse Precedence map and called to 
- * actually compile the source code with a mutable refernce to the parser
- */
-fn grouping(parser: &mut Parser) {
-    expression(parser);
-    parser.consume(TOKEN_RIGHT_PAREN, "Expect closing ')'");
-}
-
-fn binary(parser: &mut Parser) {
-    let op = parser.previous.kind;
-    let op_line = parser.previous.line_num;
-    // We explicitly call this function based on the below operators being found.
-    // Covering the _ case for exhausting but will never hit.
-    let precedence = match op {
-        TOKEN_PLUS | TOKEN_MINUS => PREC_TERM,
-        TOKEN_STAR | TOKEN_SLASH => PREC_FACTOR,
-        TOKEN_EQUAL_EQUAL | TOKEN_BANG_EQUAL => PREC_EQUALITY,
-        TOKEN_GREATER | TOKEN_LESS | TOKEN_GREATER_EQUAL | TOKEN_LESS_EQUAL => PREC_COMPARISON,
-        TOKEN_VAR => PREC_ASSIGNMENT,
-        _ => PREC_NONE,
-    };
-    parser.parse_precedence(Precedence::from_u8(precedence as u8 + 1));
-    match op {
-        TOKEN_PLUS => parser.emit_byte(OP_ADD as u8, op_line),
-        TOKEN_MINUS => parser.emit_byte(OP_SUBTRACT as u8, op_line),
-        TOKEN_STAR => parser.emit_byte(OP_MULTIPLY as u8, op_line),
-        TOKEN_SLASH => parser.emit_byte(OP_DIVIDE as u8, op_line),
-        TOKEN_EQUAL_EQUAL => parser.emit_byte(OP_EQUAL as u8, op_line),
-        TOKEN_BANG_EQUAL => parser.emit_bytes(OP_EQUAL as u8, OP_NOT as u8, op_line),
-        TOKEN_GREATER => parser.emit_byte(OP_GREATER as u8, op_line),
-        TOKEN_LESS => parser.emit_byte(OP_LESS as u8, op_line),
-        TOKEN_GREATER_EQUAL => parser.emit_bytes(OP_LESS as u8, OP_NOT as u8, op_line),
-        TOKEN_LESS_EQUAL => parser.emit_bytes(OP_GREATER as u8, OP_NOT as u8, op_line),
-        _ => parser.parse_error("Invalid binary operator"),
-    }
-}
-fn number(parser: &mut Parser) {
-    match parser.previous.lexeme.parse::<f64>() {
-        Ok(constant_value) => {
-            parser.emit_constant(Value::Number(constant_value));
-        }
-        Err(_) => {
-            parser.parse_error("Error parsing number");
-        }
-    };
-}
-
-fn expression(parser: &mut Parser) {
-    parser.parse_precedence(PREC_ASSIGNMENT);
-}
-
+/*----------------------------------------------------------------------
+ Entry points to compile code
+----------------------------------------------------------------------*/
 fn declaration(parser: &mut Parser) {
     if parser.match_token(TOKEN_VAR) {
         var_declaration(parser);
@@ -289,7 +243,59 @@ fn print_stmt(parser: &mut Parser) {
     parser.emit_byte(OP_PRINT as u8, line_num);
 }
 
-fn unary(parser: &mut Parser) {
+fn expression(parser: &mut Parser) {
+    parser.parse_precedence(PREC_ASSIGNMENT);
+}
+
+/*----------------------------------------------------------------------
+ Functions that are used in the Parse Precedence map and called to 
+ actually compile the source code with a mutable refernce to the parser
+----------------------------------------------------------------------*/
+fn grouping(parser: &mut Parser, _: bool) {
+    expression(parser);
+    parser.consume(TOKEN_RIGHT_PAREN, "Expect closing ')'");
+}
+
+fn binary(parser: &mut Parser) {
+    let op = parser.previous.kind;
+    let op_line = parser.previous.line_num;
+    // We explicitly call this function based on the below operators being found.
+    // Covering the _ case for exhausting but will never hit.
+    let precedence = match op {
+        TOKEN_PLUS | TOKEN_MINUS => PREC_TERM,
+        TOKEN_STAR | TOKEN_SLASH => PREC_FACTOR,
+        TOKEN_EQUAL_EQUAL | TOKEN_BANG_EQUAL => PREC_EQUALITY,
+        TOKEN_GREATER | TOKEN_LESS | TOKEN_GREATER_EQUAL | TOKEN_LESS_EQUAL => PREC_COMPARISON,
+        TOKEN_VAR => PREC_ASSIGNMENT,
+        _ => PREC_NONE,
+    };
+    parser.parse_precedence(Precedence::from_u8(precedence as u8 + 1));
+    match op {
+        TOKEN_PLUS => parser.emit_byte(OP_ADD as u8, op_line),
+        TOKEN_MINUS => parser.emit_byte(OP_SUBTRACT as u8, op_line),
+        TOKEN_STAR => parser.emit_byte(OP_MULTIPLY as u8, op_line),
+        TOKEN_SLASH => parser.emit_byte(OP_DIVIDE as u8, op_line),
+        TOKEN_EQUAL_EQUAL => parser.emit_byte(OP_EQUAL as u8, op_line),
+        TOKEN_BANG_EQUAL => parser.emit_bytes(OP_EQUAL as u8, OP_NOT as u8, op_line),
+        TOKEN_GREATER => parser.emit_byte(OP_GREATER as u8, op_line),
+        TOKEN_LESS => parser.emit_byte(OP_LESS as u8, op_line),
+        TOKEN_GREATER_EQUAL => parser.emit_bytes(OP_LESS as u8, OP_NOT as u8, op_line),
+        TOKEN_LESS_EQUAL => parser.emit_bytes(OP_GREATER as u8, OP_NOT as u8, op_line),
+        _ => parser.parse_error("Invalid binary operator"),
+    }
+}
+fn number(parser: &mut Parser, _: bool) {
+    match parser.previous.lexeme.parse::<f64>() {
+        Ok(constant_value) => {
+            parser.emit_constant(Value::Number(constant_value));
+        }
+        Err(_) => {
+            parser.parse_error("Error parsing number");
+        }
+    };
+}
+
+fn unary(parser: &mut Parser, _: bool) {
     let op = parser.previous.kind;
     let op_line = parser.previous.line_num;
     parser.parse_precedence(PREC_UNARY);
@@ -300,7 +306,7 @@ fn unary(parser: &mut Parser) {
     }
 }
 
-fn literal(parser: &mut Parser) {
+fn literal(parser: &mut Parser, _: bool) {
     let op_line = parser.previous.line_num;
     match parser.previous.kind {
         TOKEN_FALSE => parser.emit_byte(OP_FALSE as u8, op_line),
@@ -310,10 +316,10 @@ fn literal(parser: &mut Parser) {
     }
 }
 
-fn identifier(parser: &mut Parser) {
+fn identifier(parser: &mut Parser, can_assign: bool) {
     let identifier = String::from(&parser.previous.lexeme);
     let arg = parser.emit_constant(Value::Str(identifier));
-    if parser.match_token(TOKEN_EQUAL) {
+    if can_assign && parser.match_token(TOKEN_EQUAL) {
         expression(parser);
         parser.emit_bytes(OP_SET_GLOBAL as u8, arg as u8, parser.previous.line_num);
     } else {
@@ -321,23 +327,21 @@ fn identifier(parser: &mut Parser) {
     }
 }
 
-fn string(parser: &mut Parser) {
+fn string(parser: &mut Parser, _: bool) {
     let lexeme = &parser.previous.lexeme;
     let string = String::from(&lexeme[1..lexeme.len() - 1]);
     parser.emit_constant(Value::Str(string));
 }
 
-/*----------------------------------------------------------------------*/
-/*----------------------------------------------------------------------*/
-
-/* A struct used to store the parse rules and precedence for each of the 
+/*----------------------------------------------------------------------
+ * A struct used to store the parse rules and precedence for each of the 
  * tokens in the Lox language. This wraps a map so that the Pratt parser
  * can call the appropriate function when it encounters a given token
  * as a prefix or infix. 
-*/
+----------------------------------------------------------------------*/
 struct ParseRule {
     precedence: Precedence,
-    prefix: Option<&'static dyn Fn(&mut Parser)>,
+    prefix: Option<&'static dyn Fn(&mut Parser, bool)>,
     infix: Option<&'static dyn Fn(&mut Parser)>,
 }
 
@@ -380,7 +384,7 @@ impl ParseRules {
         self.0.get(&kind)
     }
 
-    pub fn get_prefix(&self, kind: TokenType) -> Option<&'static dyn Fn(&mut Parser)> {
+    pub fn get_prefix(&self, kind: TokenType) -> Option<&'static dyn Fn(&mut Parser, bool)> {
         if let Some(parse_rule) = self.get(kind) {
             parse_rule.prefix
         } else {
