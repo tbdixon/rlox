@@ -236,8 +236,7 @@ fn expression(parser: &mut Parser) {
 fn declaration(parser: &mut Parser) {
     if parser.match_token(TOKEN_VAR) {
         var_declaration(parser);
-    }
-    else {
+    } else {
         statement(parser);
     }
 }
@@ -247,8 +246,7 @@ fn var_declaration(parser: &mut Parser) {
     parser.emit_constant(Value::Str(String::from(&parser.previous.lexeme)));
     if parser.match_token(TOKEN_EQUAL) {
         expression(parser);
-    }
-    else {
+    } else {
         parser.emit_byte(OP_NIL as u8, parser.previous.line_num);
     }
     parser.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
@@ -304,8 +302,7 @@ fn identifier(parser: &mut Parser) {
     if parser.match_token(TOKEN_EQUAL) {
         expression(parser);
         parser.emit_bytes(OP_SET_GLOBAL as u8, arg as u8, parser.previous.line_num);
-    }
-    else {
+    } else {
         parser.emit_byte(OP_GET_GLOBAL as u8, parser.previous.line_num);
     }
 }
@@ -326,191 +323,35 @@ struct ParseRules(HashMap<TokenType, ParseRule>);
 impl ParseRules {
     pub fn new() -> ParseRules {
         let mut rules = ParseRules(HashMap::new());
-        rules.0.insert(
-            TOKEN_EOF,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: None,
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_NUMBER,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: Some(&number),
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_MINUS,
-            ParseRule {
-                precedence: PREC_TERM,
-                prefix: Some(&unary),
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_PLUS,
-            ParseRule {
-                precedence: PREC_TERM,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_STAR,
-            ParseRule {
-                precedence: PREC_FACTOR,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_SLASH,
-            ParseRule {
-                precedence: PREC_FACTOR,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_LEFT_PAREN,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: Some(&grouping),
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_FALSE,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: Some(&literal),
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_TRUE,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: Some(&literal),
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_BANG,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: Some(&unary),
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_NIL,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: Some(&literal),
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_RIGHT_PAREN,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: None,
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_SEMICOLON,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: None,
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_EQUAL_EQUAL,
-            ParseRule {
-                precedence: PREC_EQUALITY,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_BANG_EQUAL,
-            ParseRule {
-                precedence: PREC_EQUALITY,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_GREATER,
-            ParseRule {
-                precedence: PREC_COMPARISON,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_LESS,
-            ParseRule {
-                precedence: PREC_COMPARISON,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_GREATER_EQUAL,
-            ParseRule {
-                precedence: PREC_COMPARISON,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_LESS_EQUAL,
-            ParseRule {
-                precedence: PREC_COMPARISON,
-                prefix: None,
-                infix: Some(&binary),
-            },
-        );
-        rules.0.insert(
-            TOKEN_STRING,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: Some(&string),
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_EQUAL,
-            ParseRule {
-                precedence: PREC_ASSIGNMENT,
-                prefix: None,
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_VAR,
-            ParseRule {
-                precedence: PREC_ASSIGNMENT,
-                prefix: None, 
-                infix: None,
-            },
-        );
-        rules.0.insert(
-            TOKEN_IDENTIFIER,
-            ParseRule {
-                precedence: PREC_NONE,
-                prefix: Some(&identifier), 
-                infix: None,
-            },
-        );
-          rules
+        rules.0.insert(TOKEN_EOF,           ParseRule {precedence: PREC_NONE,       prefix: None,            infix: None});
+        rules.0.insert(TOKEN_NUMBER,        ParseRule {precedence: PREC_NONE,       prefix: Some(&number),   infix: None});
+        rules.0.insert(TOKEN_LEFT_PAREN,    ParseRule {precedence: PREC_NONE,       prefix: Some(&grouping), infix: None});
+        
+        rules.0.insert(TOKEN_FALSE,         ParseRule {precedence: PREC_NONE,       prefix: Some(&literal), infix: None});
+        rules.0.insert(TOKEN_TRUE,          ParseRule {precedence: PREC_NONE,       prefix: Some(&literal), infix: None});
+        rules.0.insert(TOKEN_BANG,          ParseRule {precedence: PREC_NONE,       prefix: Some(&unary),   infix: None});
+        rules.0.insert(TOKEN_NIL,           ParseRule {precedence: PREC_NONE,       prefix: Some(&literal), infix: None});
+        rules.0.insert(TOKEN_RIGHT_PAREN,   ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
+        rules.0.insert(TOKEN_SEMICOLON,     ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
+
+        rules.0.insert(TOKEN_MINUS,         ParseRule {precedence: PREC_TERM,       prefix: Some(&unary),   infix: Some(&binary)});
+        rules.0.insert(TOKEN_PLUS,          ParseRule {precedence: PREC_TERM,       prefix: Some(&unary),   infix: Some(&binary)});
+        rules.0.insert(TOKEN_STAR,          ParseRule {precedence: PREC_FACTOR,     prefix: Some(&unary),   infix: Some(&binary)});
+        rules.0.insert(TOKEN_SLASH,         ParseRule {precedence: PREC_FACTOR,     prefix: Some(&unary),   infix: Some(&binary)});
+
+        rules.0.insert(TOKEN_EQUAL_EQUAL,   ParseRule {precedence: PREC_EQUALITY,   prefix: None,           infix: Some(&binary)});
+        rules.0.insert(TOKEN_BANG_EQUAL,    ParseRule {precedence: PREC_EQUALITY,   prefix: None,           infix: Some(&binary)});
+
+        rules.0.insert(TOKEN_GREATER,       ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
+        rules.0.insert(TOKEN_LESS,          ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
+        rules.0.insert(TOKEN_GREATER_EQUAL, ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
+        rules.0.insert(TOKEN_LESS_EQUAL,    ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
+
+        rules.0.insert(TOKEN_STRING,        ParseRule {precedence: PREC_NONE,       prefix: Some(&string),  infix: None});
+        rules.0.insert(TOKEN_EQUAL,         ParseRule {precedence: PREC_ASSIGNMENT, prefix: None,           infix: None});
+        rules.0.insert(TOKEN_VAR,           ParseRule {precedence: PREC_ASSIGNMENT, prefix: None,           infix: None});
+        rules.0.insert(TOKEN_IDENTIFIER,    ParseRule {precedence: PREC_NONE,       prefix: Some(&identifier), infix: None});
+        rules
     }
 
     pub fn get(&self, kind: TokenType) -> Option<&ParseRule> {
