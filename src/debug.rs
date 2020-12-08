@@ -1,4 +1,5 @@
-use crate::chunk::{Chunk, OpCode};
+use crate::chunk::Chunk;
+use crate::chunk::OpCode::{self, *};
 use crate::{debug, debugln};
 
 pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
@@ -13,21 +14,26 @@ pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
 pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
     debug!("{:04}\t{}\t", offset, chunk.lines[offset]);
     match OpCode::from(chunk.code[offset]) {
-        OpCode::OP_RETURN => simple_instruction(OpCode::OP_RETURN, offset),
-        OpCode::OP_CONSTANT => constant_instruction(OpCode::OP_CONSTANT, chunk, offset),
-        OpCode::OP_NEGATE => simple_instruction(OpCode::OP_NEGATE, offset),
-        OpCode::OP_ADD => simple_instruction(OpCode::OP_ADD, offset),
-        OpCode::OP_SUBTRACT => simple_instruction(OpCode::OP_SUBTRACT, offset),
-        OpCode::OP_MULTIPLY => simple_instruction(OpCode::OP_MULTIPLY, offset),
-        OpCode::OP_DIVIDE => simple_instruction(OpCode::OP_DIVIDE, offset),
-        OpCode::OP_NIL => simple_instruction(OpCode::OP_NIL, offset),
-        OpCode::OP_TRUE => simple_instruction(OpCode::OP_TRUE, offset),
-        OpCode::OP_FALSE => simple_instruction(OpCode::OP_FALSE, offset),
-        OpCode::OP_NOT => simple_instruction(OpCode::OP_NOT, offset),
-        OpCode::OP_EQUAL => simple_instruction(OpCode::OP_EQUAL, offset),
-        OpCode::OP_GREATER => simple_instruction(OpCode::OP_GREATER, offset),
-        OpCode::OP_LESS => simple_instruction(OpCode::OP_LESS, offset),
-        OpCode::OP_UNKNOWN => {
+        OP_RETURN => simple_instruction(OP_RETURN, offset),
+        OP_CONSTANT => constant_instruction(OP_CONSTANT, chunk, offset),
+        OP_NEGATE => simple_instruction(OP_NEGATE, offset),
+        OP_ADD => simple_instruction(OP_ADD, offset),
+        OP_SUBTRACT => simple_instruction(OP_SUBTRACT, offset),
+        OP_MULTIPLY => simple_instruction(OP_MULTIPLY, offset),
+        OP_DIVIDE => simple_instruction(OP_DIVIDE, offset),
+        OP_NIL => simple_instruction(OP_NIL, offset),
+        OP_TRUE => simple_instruction(OP_TRUE, offset),
+        OP_FALSE => simple_instruction(OP_FALSE, offset),
+        OP_NOT => simple_instruction(OP_NOT, offset),
+        OP_EQUAL => simple_instruction(OP_EQUAL, offset),
+        OP_GREATER => simple_instruction(OP_GREATER, offset),
+        OP_LESS => simple_instruction(OP_LESS, offset),
+        OP_PRINT => simple_instruction(OP_PRINT, offset),
+        OP_GET_GLOBAL => simple_instruction(OP_GET_GLOBAL, offset),
+        OP_SET_GLOBAL => simple_instruction(OP_SET_GLOBAL, offset),
+        OP_DEFINE_GLOBAL => simple_instruction(OP_DEFINE_GLOBAL, offset),
+        OP_POP => simple_instruction(OP_POP, offset),
+        OP_UNKNOWN => {
             debugln!("Unknown Opcode Encountered");
             offset + 1
         }

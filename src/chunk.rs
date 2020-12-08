@@ -1,3 +1,4 @@
+use std::fmt;
 use strum_macros::EnumIter;
 
 // Type checking makes it trickier to switch between consider an
@@ -21,27 +22,38 @@ pub enum OpCode {
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
+    OP_POP,
+    OP_GET_GLOBAL,
+    OP_DEFINE_GLOBAL,
+    OP_SET_GLOBAL,
+    OP_PRINT,
     OP_UNKNOWN = 0xFF,
 }
+use crate::chunk::OpCode::*;
 
 impl From<OpCode> for u8 {
     fn from(byte: OpCode) -> u8 {
         match byte {
-            OpCode::OP_RETURN => 0x0,
-            OpCode::OP_CONSTANT => 0x1,
-            OpCode::OP_NEGATE => 0x2,
-            OpCode::OP_ADD => 0x3,
-            OpCode::OP_SUBTRACT => 0x4,
-            OpCode::OP_MULTIPLY => 0x5,
-            OpCode::OP_DIVIDE => 0x6,
-            OpCode::OP_NIL => 0x7,
-            OpCode::OP_TRUE => 0x8,
-            OpCode::OP_FALSE => 0x9,
-            OpCode::OP_NOT => 0xA,
-            OpCode::OP_EQUAL => 0xB,
-            OpCode::OP_GREATER => 0xC,
-            OpCode::OP_LESS => 0xD,
-             _ => 0xFF,
+            OP_RETURN => 0x0,
+            OP_CONSTANT => 0x1,
+            OP_NEGATE => 0x2,
+            OP_ADD => 0x3,
+            OP_SUBTRACT => 0x4,
+            OP_MULTIPLY => 0x5,
+            OP_DIVIDE => 0x6,
+            OP_NIL => 0x7,
+            OP_TRUE => 0x8,
+            OP_FALSE => 0x9,
+            OP_NOT => 0xA,
+            OP_EQUAL => 0xB,
+            OP_GREATER => 0xC,
+            OP_LESS => 0xD,
+            OP_POP => 0xE,
+            OP_GET_GLOBAL => 0xF,
+            OP_DEFINE_GLOBAL => 0x10,
+            OP_SET_GLOBAL => 0x11,
+            OP_PRINT => 0x12,
+            _ => 0xFF,
         }
     }
 }
@@ -49,21 +61,26 @@ impl From<OpCode> for u8 {
 impl From<u8> for OpCode {
     fn from(byte: u8) -> Self {
         match byte {
-            0x0 => OpCode::OP_RETURN,
-            0x1 => OpCode::OP_CONSTANT,
-            0x2 => OpCode::OP_NEGATE,
-            0x3 => OpCode::OP_ADD,
-            0x4 => OpCode::OP_SUBTRACT,
-            0x5 => OpCode::OP_MULTIPLY,
-            0x6 => OpCode::OP_DIVIDE,
-            0x7 => OpCode::OP_NIL,
-            0x8 => OpCode::OP_TRUE,
-            0x9 => OpCode::OP_FALSE,
-            0xA => OpCode::OP_NOT,
-            0xB => OpCode::OP_EQUAL,
-            0xC => OpCode::OP_GREATER,
-            0xD => OpCode::OP_LESS,
-            _ => OpCode::OP_UNKNOWN,
+            0x0 => OP_RETURN,
+            0x1 => OP_CONSTANT,
+            0x2 => OP_NEGATE,
+            0x3 => OP_ADD,
+            0x4 => OP_SUBTRACT,
+            0x5 => OP_MULTIPLY,
+            0x6 => OP_DIVIDE,
+            0x7 => OP_NIL,
+            0x8 => OP_TRUE,
+            0x9 => OP_FALSE,
+            0xA => OP_NOT,
+            0xB => OP_EQUAL,
+            0xC => OP_GREATER,
+            0xD => OP_LESS,
+            0xE => OP_POP,
+            0xF => OP_GET_GLOBAL,
+            0x10 => OP_DEFINE_GLOBAL,
+            0x11 => OP_SET_GLOBAL,
+            0x12 => OP_PRINT,
+            _ => OP_UNKNOWN,
         }
     }
 }
@@ -74,6 +91,17 @@ pub enum Value {
     Nil(),
     Number(f64),
     Str(String),
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Bool(b) => write!(f, "{}", b),
+            Value::Nil() => write!(f, "nil"),
+            Value::Number(n) => write!(f, "{}", n),
+            Value::Str(s) => write!(f, "{}", s),
+        }
+    }
 }
 
 type ConstantPool = Vec<Value>;

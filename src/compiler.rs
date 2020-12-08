@@ -1,4 +1,5 @@
-use crate::chunk::{Chunk, OpCode, Value};
+use crate::chunk::OpCode::*;
+use crate::chunk::{Chunk, Value};
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
 use crate::Result;
@@ -124,6 +125,22 @@ impl Parser<'_> {
         }
     }
 
+    fn match_token(&mut self, expected: TokenType) -> bool {
+        if self.current.kind == expected {
+            self.advance();
+            return true;
+        }
+        return false;
+    }
+
+    fn current_is(&self, expected: TokenType) -> bool {
+        self.current.kind == expected
+    }
+
+    fn previous_is(&self, expected: TokenType) -> bool {
+        self.previous.kind == expected
+    }
+
     fn check(&mut self, expected: TokenType, msg: &'static str) {
         if self.current.kind != expected {
             self.parse_error(msg);
@@ -141,13 +158,10 @@ impl Parser<'_> {
         self.chunk.write(b2, line);
     }
 
-    fn emit_constant(&mut self, value: Value) {
+    fn emit_constant(&mut self, value: Value) -> usize {
         let const_idx = self.chunk.add_constant(value);
-        self.emit_bytes(
-            OpCode::OP_CONSTANT as u8,
-            const_idx as u8,
-            self.current.line_num,
-        );
+        self.emit_bytes(OP_CONSTANT as u8, const_idx as u8, self.current.line_num);
+        const_idx
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) {
@@ -155,19 +169,17 @@ impl Parser<'_> {
         if let Some(prefix_fn) = self.parse_rules.get_prefix(self.previous.kind) {
             prefix_fn(self);
         } else {
-            self.parse_error("Expect expression");
+            println!("{:?}", self.previous);
+            self.parse_error("Expect expression for prefix");
         }
-        /*        debugln!(
-                     "Precedence: {:?}. Previous: {:?}. Current: {:?}",
-                     precedence, self.previous, self.current
-                 );
-        */
+        //println!("Precedence: {:?}. Previous: {:?}. Current: {:?}",precedence, self.previous, self.current);
         while precedence <= self.parse_rules.get_precedence(self.current.kind).unwrap() {
             self.advance();
             if let Some(infix_fn) = self.parse_rules.get_infix(self.previous.kind) {
                 infix_fn(self);
             } else {
-                self.parse_error("Expect expression");
+                println!("{:?}", self.current);
+                self.parse_error("Expect expression for infix");
             }
         }
     }
@@ -188,24 +200,21 @@ fn binary(parser: &mut Parser) {
         TOKEN_STAR | TOKEN_SLASH => PREC_FACTOR,
         TOKEN_EQUAL_EQUAL | TOKEN_BANG_EQUAL => PREC_EQUALITY,
         TOKEN_GREATER | TOKEN_LESS | TOKEN_GREATER_EQUAL | TOKEN_LESS_EQUAL => PREC_COMPARISON,
+        TOKEN_VAR => PREC_ASSIGNMENT,
         _ => PREC_NONE,
     };
     parser.parse_precedence(Precedence::from_u8(precedence as u8 + 1));
     match op {
-        TOKEN_PLUS => parser.emit_byte(OpCode::OP_ADD as u8, op_line),
-        TOKEN_MINUS => parser.emit_byte(OpCode::OP_SUBTRACT as u8, op_line),
-        TOKEN_STAR => parser.emit_byte(OpCode::OP_MULTIPLY as u8, op_line),
-        TOKEN_SLASH => parser.emit_byte(OpCode::OP_DIVIDE as u8, op_line),
-        TOKEN_EQUAL_EQUAL => parser.emit_byte(OpCode::OP_EQUAL as u8, op_line),
-        TOKEN_BANG_EQUAL => {
-            parser.emit_bytes(OpCode::OP_EQUAL as u8, OpCode::OP_NOT as u8, op_line)
-        }
-        TOKEN_GREATER => parser.emit_byte(OpCode::OP_GREATER as u8, op_line),
-        TOKEN_LESS => parser.emit_byte(OpCode::OP_LESS as u8, op_line),
-        TOKEN_GREATER_EQUAL => {
-            parser.emit_bytes(OpCode::OP_LESS as u8, OpCode::OP_NOT as u8, op_line)
-        }
-        TOKEN_LESS_EQUAL => parser.emit_bytes(OpCode::OP_GREATER as u8, OpCode::OP_NOT as u8, op_line),
+        TOKEN_PLUS => parser.emit_byte(OP_ADD as u8, op_line),
+        TOKEN_MINUS => parser.emit_byte(OP_SUBTRACT as u8, op_line),
+        TOKEN_STAR => parser.emit_byte(OP_MULTIPLY as u8, op_line),
+        TOKEN_SLASH => parser.emit_byte(OP_DIVIDE as u8, op_line),
+        TOKEN_EQUAL_EQUAL => parser.emit_byte(OP_EQUAL as u8, op_line),
+        TOKEN_BANG_EQUAL => parser.emit_bytes(OP_EQUAL as u8, OP_NOT as u8, op_line),
+        TOKEN_GREATER => parser.emit_byte(OP_GREATER as u8, op_line),
+        TOKEN_LESS => parser.emit_byte(OP_LESS as u8, op_line),
+        TOKEN_GREATER_EQUAL => parser.emit_bytes(OP_LESS as u8, OP_NOT as u8, op_line),
+        TOKEN_LESS_EQUAL => parser.emit_bytes(OP_GREATER as u8, OP_NOT as u8, op_line),
         _ => parser.parse_error("Invalid binary operator"),
     }
 }
@@ -224,13 +233,57 @@ fn expression(parser: &mut Parser) {
     parser.parse_precedence(PREC_ASSIGNMENT);
 }
 
+fn declaration(parser: &mut Parser) {
+    if parser.match_token(TOKEN_VAR) {
+        var_declaration(parser);
+    }
+    else {
+        statement(parser);
+    }
+}
+
+fn var_declaration(parser: &mut Parser) {
+    parser.consume(TOKEN_IDENTIFIER, "Expect variable name");
+    parser.emit_constant(Value::Str(String::from(&parser.previous.lexeme)));
+    if parser.match_token(TOKEN_EQUAL) {
+        expression(parser);
+    }
+    else {
+        parser.emit_byte(OP_NIL as u8, parser.previous.line_num);
+    }
+    parser.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
+    parser.emit_byte(OP_DEFINE_GLOBAL as u8, parser.previous.line_num);
+}
+
+fn statement(parser: &mut Parser) {
+    if parser.match_token(TOKEN_PRINT) {
+        print_stmt(parser);
+    } else {
+        expr_stmt(parser);
+    };
+}
+
+fn expr_stmt(parser: &mut Parser) {
+    let line_num = parser.current.line_num;
+    expression(parser);
+    parser.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
+    parser.emit_byte(OP_POP as u8, line_num);
+}
+
+fn print_stmt(parser: &mut Parser) {
+    let line_num = parser.previous.line_num;
+    expression(parser);
+    parser.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
+    parser.emit_byte(OP_PRINT as u8, line_num);
+}
+
 fn unary(parser: &mut Parser) {
     let op = parser.previous.kind;
     let op_line = parser.previous.line_num;
     parser.parse_precedence(PREC_UNARY);
     match op {
-        TOKEN_MINUS => parser.emit_byte(OpCode::OP_NEGATE as u8, op_line),
-        TOKEN_BANG => parser.emit_byte(OpCode::OP_NOT as u8, op_line),
+        TOKEN_MINUS => parser.emit_byte(OP_NEGATE as u8, op_line),
+        TOKEN_BANG => parser.emit_byte(OP_NOT as u8, op_line),
         _ => parser.parse_error("Invalid unary operator"),
     }
 }
@@ -238,16 +291,28 @@ fn unary(parser: &mut Parser) {
 fn literal(parser: &mut Parser) {
     let op_line = parser.previous.line_num;
     match parser.previous.kind {
-        TOKEN_FALSE => parser.emit_byte(OpCode::OP_FALSE as u8, op_line),
-        TOKEN_TRUE => parser.emit_byte(OpCode::OP_TRUE as u8, op_line),
-        TOKEN_NIL => parser.emit_byte(OpCode::OP_NIL as u8, op_line),
+        TOKEN_FALSE => parser.emit_byte(OP_FALSE as u8, op_line),
+        TOKEN_TRUE => parser.emit_byte(OP_TRUE as u8, op_line),
+        TOKEN_NIL => parser.emit_byte(OP_NIL as u8, op_line),
         _ => {}
+    }
+}
+
+fn identifier(parser: &mut Parser) {
+    let identifier = String::from(&parser.previous.lexeme);
+    let arg = parser.emit_constant(Value::Str(identifier));
+    if parser.match_token(TOKEN_EQUAL) {
+        expression(parser);
+        parser.emit_bytes(OP_SET_GLOBAL as u8, arg as u8, parser.previous.line_num);
+    }
+    else {
+        parser.emit_byte(OP_GET_GLOBAL as u8, parser.previous.line_num);
     }
 }
 
 fn string(parser: &mut Parser) {
     let lexeme = &parser.previous.lexeme;
-    let string = String::from(&lexeme[1..lexeme.len()-1]);
+    let string = String::from(&lexeme[1..lexeme.len() - 1]);
     parser.emit_constant(Value::Str(string));
 }
 
@@ -358,6 +423,14 @@ impl ParseRules {
             },
         );
         rules.0.insert(
+            TOKEN_SEMICOLON,
+            ParseRule {
+                precedence: PREC_NONE,
+                prefix: None,
+                infix: None,
+            },
+        );
+        rules.0.insert(
             TOKEN_EQUAL_EQUAL,
             ParseRule {
                 precedence: PREC_EQUALITY,
@@ -404,8 +477,8 @@ impl ParseRules {
                 prefix: None,
                 infix: Some(&binary),
             },
-        ); 
-         rules.0.insert(
+        );
+        rules.0.insert(
             TOKEN_STRING,
             ParseRule {
                 precedence: PREC_NONE,
@@ -413,7 +486,31 @@ impl ParseRules {
                 infix: None,
             },
         );
-        rules
+        rules.0.insert(
+            TOKEN_EQUAL,
+            ParseRule {
+                precedence: PREC_ASSIGNMENT,
+                prefix: None,
+                infix: None,
+            },
+        );
+        rules.0.insert(
+            TOKEN_VAR,
+            ParseRule {
+                precedence: PREC_ASSIGNMENT,
+                prefix: None, 
+                infix: None,
+            },
+        );
+        rules.0.insert(
+            TOKEN_IDENTIFIER,
+            ParseRule {
+                precedence: PREC_NONE,
+                prefix: Some(&identifier), 
+                infix: None,
+            },
+        );
+          rules
     }
 
     pub fn get(&self, kind: TokenType) -> Option<&ParseRule> {
@@ -450,16 +547,13 @@ impl ParseRules {
 pub fn compile(source: &str, chunk: &mut Chunk) -> Result<()> {
     let tokens = Scanner::new(source.trim()).scan();
     let mut parser = Parser::new(tokens, chunk, ParseRules::new());
+    println!("{:?}", parser.tokens);
     parser.advance();
-    expression(&mut parser);
-    parser.check(TOKEN_EOF, "Expect end of expression");
-    parser.emit_byte(OpCode::OP_RETURN as u8, parser.current.line_num);
-    /*if crate::DEBUG {
-        for op_code in &parser.chunk.code {
-            println!("{:?}", OpCode::from(*op_code));
-        }
-        println!("Constants: {:?}", parser.chunk.constant_pool);
-    }*/
+    while !parser.current_is(TOKEN_EOF) {
+        declaration(&mut parser);
+    }
+    parser.emit_byte(OP_RETURN as u8, parser.current.line_num);
+    println!("{:?}", parser.chunk);
     if parser.had_error {
         Err(Box::new(ParserError()))
     } else {
