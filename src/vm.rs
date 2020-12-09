@@ -3,9 +3,9 @@ use crate::chunk::{Chunk, Value};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
+use crate::stack::*;
 use std::collections::HashMap;
-use std::mem::{discriminant, replace, MaybeUninit};
-use std::ops::Index;
+use std::mem::discriminant;
 
 type Result<T> = std::result::Result<T, InterpretResult>;
 
@@ -22,59 +22,16 @@ impl InterpretResult {
     }
 }
 
-// Build our own stack so that we can use a small stack allocated bit of space
-// rather than a Vec which will continually be allocating around the heap
-// given this is the core element of our VM worth having much faster.
-pub const MAX_STACK_SIZE: usize = 256;
-pub struct Stack {
-    top: usize,
-    stack: [Option<Value>; MAX_STACK_SIZE],
-}
-
-impl Stack {
-    fn new() -> Stack {
-        // Some fun unsafe rust to initialize a constant array of Option<Value> given the
-        // String inside Value precludes simple Copy trait. This should avoid any problematic
-        // behavior as the stack is immedietly being set to None and then used as normal.
-        let stack = unsafe {
-            let mut s = MaybeUninit::<[Option<Value>; MAX_STACK_SIZE]>::uninit();
-            let p = s.as_mut_ptr() as *mut Option<Value>;
-            for offset in 0..MAX_STACK_SIZE as isize {
-                std::ptr::write(p.offset(offset), None);
-            }
-            s.assume_init()
-        };
-        Stack { top: 0, stack }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.top == 0
-    }
-
-    fn pop(&mut self) -> Result<Value> {
-        self.top -= 1;
-        replace(&mut self.stack[self.top], None)
-            .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Empty stack"))
-    }
-
-    fn push(&mut self, v: Value) {
-        self.stack[self.top] = Some(v);
-        self.top += 1;
-    }
-}
-
-impl Index<usize> for Stack {
-    type Output = Option<Value>;
-
-    fn index(&self, i: usize) -> &Option<Value> {
-        &self.stack[i]
+impl From<&'static str> for InterpretResult {
+    fn from(msg: &'static str) -> Self {
+        INTERPRET_RUNTIME_ERROR(msg)
     }
 }
 
 pub struct VM {
     pub chunk: Chunk,
     pub ip: usize,
-    pub stack: Stack,
+    pub stack: Stack<Value>,
     pub globals: HashMap<String, Value>,
 }
 
@@ -94,18 +51,6 @@ impl VM {
         self.chunk = Chunk::new();
         self.stack = Stack::new();
         self.ip = 0;
-    }
-
-    fn print_stack(&self) {
-        if !self.stack.is_empty() {
-            print!("Stack top {}: ", self.stack.top);
-            for idx in 0..self.stack.top {
-                print!("[");
-                print!("{:?}", self.stack[idx]);
-                print!("]");
-            }
-            println!();
-        }
     }
 
     fn print_globals(&self) {
@@ -224,7 +169,7 @@ impl VM {
     }
 
     fn print(&mut self) -> Result<InterpretResult> {
-        println!("{}", self.stack.pop()?);
+        println!("=={}==", self.stack.pop()?);
         Ok(INTERPRET_OK)
     }
 
@@ -283,7 +228,7 @@ impl VM {
         loop {
             if crate::DEBUG {
                 println!("-----------------------------------------------------------------");
-                self.print_stack();
+                self.stack.print_stack();
                 self.print_globals();
                 disassemble_instruction(&self.chunk, self.ip);
             }
@@ -318,6 +263,21 @@ impl VM {
                 OP_GET_GLOBAL => self.get_global(),
                 OP_DEFINE_GLOBAL => self.define_global(),
                 OP_SET_GLOBAL => self.set_global(),
+                OP_GET_LOCAL => {
+                    let local_index: usize = self.read_byte() as usize;
+                    let val = self.stack.get(local_index)?.clone();
+                    self.stack.push(val);
+                    Ok(INTERPRET_OK)
+                }
+                OP_SET_LOCAL => {
+                    let local_index: usize = self.read_byte() as usize;
+                    if let Some(new_val) = self.stack.peek() {
+                        self.stack.update(local_index, new_val);
+                        Ok(INTERPRET_OK)
+                    } else {
+                        Err(INTERPRET_RUNTIME_ERROR("No value on stack to assign"))
+                    }
+                }
                 OP_UNKNOWN => Err(INTERPRET_COMPILE_ERROR),
             }?;
         }

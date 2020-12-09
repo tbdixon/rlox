@@ -4,6 +4,7 @@ use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
 use crate::debug::disassemble_chunk;
 use crate::Result;
+use crate::stack::*;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -53,10 +54,16 @@ impl fmt::Display for CompilerError {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-struct Local<'a> {
-    name: &'a Token,
-    depth: usize,
+#[derive(Debug, Clone)]
+struct Local {
+    name: String,
+    depth: u8,
+}
+
+impl  std::cmp::PartialEq for Local {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
 }
 
 struct Compiler<'a> {
@@ -69,7 +76,7 @@ struct Compiler<'a> {
     panic_mode: bool,
     parse_rules: ParseRules,
 /*-----Variables---------*/
-    locals: [Option<Local<'a>>; crate::vm::MAX_STACK_SIZE],
+    locals: Stack<Local>,
     local_count: u8,
     scope_depth: u8,
 }
@@ -84,10 +91,22 @@ impl Compiler<'_> {
             current: Token::empty(),
             had_error: false,
             panic_mode: false,
-            locals: [None; crate::vm::MAX_STACK_SIZE],
+            locals: Stack::new(),
             local_count: 0,
             scope_depth: 0,
         }
+    }
+
+    fn add_local(&mut self, name: String) -> usize {
+        let local = Local { name, depth: self.scope_depth };
+        self.local_count += 1;
+        self.locals.push(local)
+    }
+
+    fn resolve_local(&self, token: &Token) -> Option<usize> {
+        let variable_name = String::from(&token.lexeme);
+        let local = Local { name: variable_name, depth: self.scope_depth };
+        self.locals.find(local)
     }
 
     fn begin_scope(&mut self) {
@@ -169,9 +188,8 @@ impl Compiler<'_> {
         self.chunk.write(b2, line);
     }
 
-    fn emit_constant(&mut self, value: Value) -> usize {
+    fn create_constant(&mut self, value: Value) -> usize {
         let const_idx = self.chunk.add_constant(value);
-        self.emit_bytes(OP_CONSTANT as u8, const_idx as u8, self.current.line_num);
         const_idx
     }
 
@@ -234,22 +252,47 @@ fn declaration(compiler: &mut Compiler) {
 }
 
 fn var_declaration(compiler: &mut Compiler) {
-    compiler.consume(TOKEN_IDENTIFIER, "Expect variable name");
-    compiler.emit_constant(Value::Str(compiler.previous.lexeme.to_string()));
+    // Parse the variable and add the name to constant table / local stack
+    let var_idx = parse_variable(compiler);
+    
+    // Grab the value that the variable will be initialized as. Either there is
+    // an = in which case parse the expression otherwise all variables start
+    // out as Nil. Emit this onto the stack.
     if compiler.match_token(TOKEN_EQUAL) {
         expression(compiler);
     } else {
         compiler.emit_byte(OP_NIL as u8, compiler.previous.line_num);
     }
+
+    // Define / Set the initial value of the variable 
+    if compiler.scope_depth == 0 {
+        compiler.emit_byte(OP_DEFINE_GLOBAL as u8, compiler.previous.line_num);
+    } else {
+        compiler.emit_bytes(OP_SET_LOCAL as u8, var_idx as u8, compiler.previous.line_num);
+    }
     compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
-    compiler.emit_byte(OP_DEFINE_GLOBAL as u8, compiler.previous.line_num);
+}
+
+fn parse_variable(compiler: &mut Compiler) -> usize {
+    compiler.consume(TOKEN_IDENTIFIER, "Expect variable name");
+    let variable_name = String::from(&compiler.previous.lexeme);
+    if compiler.scope_depth == 0 {
+        let const_idx = compiler.create_constant(Value::Str(variable_name));
+        compiler.emit_bytes(OP_CONSTANT as u8, const_idx as u8, compiler.current.line_num);
+        const_idx
+    }
+    else {
+        compiler.add_local(variable_name)
+    }
 }
 
 fn statement(compiler: &mut Compiler) {
     if compiler.match_token(TOKEN_PRINT) {
         print_stmt(compiler);
     } else if compiler.match_token(TOKEN_LEFT_BRACE) {
+        compiler.begin_scope(); 
         block_stmt(compiler);
+        compiler.end_scope(); 
     }
     else{
         expr_stmt(compiler);
@@ -257,14 +300,12 @@ fn statement(compiler: &mut Compiler) {
 }
 
 fn block_stmt(compiler: &mut Compiler) {
-    compiler.begin_scope(); 
     // Keep looping so long as we don't hit the closing brace. If we hit EOF
     // that is an error that will be caught on the subsequent consume call. 
     while !compiler.peek(TOKEN_RIGHT_BRACE) && !compiler.peek(TOKEN_EOF) {
         declaration(compiler);
     }
     compiler.consume(TOKEN_RIGHT_BRACE, "Expect closing '}' at end of block");
-    compiler.end_scope(); 
 }
 
 fn expr_stmt(compiler: &mut Compiler) {
@@ -325,7 +366,8 @@ fn binary(compiler: &mut Compiler) {
 fn number(compiler: &mut Compiler, _: bool) {
     match compiler.previous.lexeme.parse::<f64>() {
         Ok(constant_value) => {
-            compiler.emit_constant(Value::Number(constant_value));
+            let const_idx = compiler.create_constant(Value::Number(constant_value));
+            compiler.emit_bytes(OP_CONSTANT as u8, const_idx as u8, compiler.current.line_num);
         }
         Err(_) => {
             compiler.parse_error("Error parsing number");
@@ -355,20 +397,35 @@ fn literal(compiler: &mut Compiler, _: bool) {
 }
 
 fn identifier(compiler: &mut Compiler, can_assign: bool) {
-    let identifier = compiler.previous.lexeme.to_string();
-    let arg = compiler.emit_constant(Value::Str(identifier));
+    let op_set;
+    let op_get;
+    let arg;
+    match compiler.resolve_local(&compiler.previous) {
+        Some(v) => {
+            arg = v;
+            op_set = OP_SET_LOCAL;
+            op_get = OP_GET_LOCAL;
+        },
+        _ => {
+            let identifier = compiler.previous.lexeme.to_string();
+            arg = compiler.create_constant(Value::Str(identifier));
+            op_set = OP_SET_GLOBAL;
+            op_get = OP_GET_GLOBAL;
+        }
+    };
     if can_assign && compiler.match_token(TOKEN_EQUAL) {
         expression(compiler);
-        compiler.emit_bytes(OP_SET_GLOBAL as u8, arg as u8, compiler.previous.line_num);
+        compiler.emit_bytes(op_set as u8, arg as u8, compiler.previous.line_num);
     } else {
-        compiler.emit_byte(OP_GET_GLOBAL as u8, compiler.previous.line_num);
+        compiler.emit_bytes(op_get as u8, arg as u8, compiler.previous.line_num);
     }
 }
 
 fn string(compiler: &mut Compiler, _: bool) {
     let lexeme = &compiler.previous.lexeme;
     let string = String::from(&lexeme[1..lexeme.len() - 1]);
-    compiler.emit_constant(Value::Str(string));
+    let const_idx = compiler.create_constant(Value::Str(string));
+    compiler.emit_bytes(OP_CONSTANT as u8, const_idx as u8, compiler.previous.line_num);
 }
 
 /*----------------------------------------------------------------------

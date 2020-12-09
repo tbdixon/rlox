@@ -27,6 +27,8 @@ pub enum OpCode {
     OP_DEFINE_GLOBAL,
     OP_SET_GLOBAL,
     OP_PRINT,
+    OP_GET_LOCAL,
+    OP_SET_LOCAL,
     OP_UNKNOWN = 0xFF,
 }
 use crate::chunk::OpCode::*;
@@ -53,6 +55,8 @@ impl From<OpCode> for u8 {
             OP_DEFINE_GLOBAL => 0x10,
             OP_SET_GLOBAL => 0x11,
             OP_PRINT => 0x12,
+            OP_GET_LOCAL => 0x13,
+            OP_SET_LOCAL => 0x14,
             _ => 0xFF,
         }
     }
@@ -80,6 +84,8 @@ impl From<u8> for OpCode {
             0x10 => OP_DEFINE_GLOBAL,
             0x11 => OP_SET_GLOBAL,
             0x12 => OP_PRINT,
+            0x13 => OP_GET_LOCAL,
+            0x14 => OP_SET_LOCAL,
             _ => OP_UNKNOWN,
         }
     }

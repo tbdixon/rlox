@@ -1,3 +1,8 @@
-var a = "Hello ";
-var b = "World";
-print( a + b );
+var c = 5005;
+{
+var a = 5;
+var b = 5;
+print("brk");
+print(a+b+c);
+}
+
