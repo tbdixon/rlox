@@ -90,6 +90,13 @@ impl Compiler<'_> {
         }
     }
 
+    fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+     fn end_scope(&mut self) {
+        self.scope_depth -= 1;
+    }
+     
     // Helper to emit an error message for user consumption
     fn parse_error(&mut self, msg: &'static str) {
         self.had_error = true;
@@ -109,7 +116,6 @@ impl Compiler<'_> {
     }
 
     // This handles looping through the list of scanned tokens.
-    //
     // If we are out of tokens but in the middle of compiling
     // an expression that is an error.
     fn advance(&mut self) {
@@ -148,6 +154,10 @@ impl Compiler<'_> {
         return false;
     }
 
+    fn peek(&mut self, expected: TokenType) -> bool {
+        self.current.kind == expected
+    }
+    
     // Functions to handle "emitting" values which writes them to the chunk
     // being borrowed by the compiler.
     fn emit_byte(&mut self, byte: u8, line: i32) {
@@ -216,7 +226,7 @@ fn declaration(compiler: &mut Compiler) {
         statement(compiler);
     }
     // If we hit an error parsing, synchronize to the next valid point. 
-    // The execution will not happen but this enables compilation to continue
+    // Execution will not happen but this enables compilation to continue
     // so we grab any additional errors. 
     if compiler.panic_mode {
         compiler.synchronize();
@@ -245,10 +255,16 @@ fn statement(compiler: &mut Compiler) {
         expr_stmt(compiler);
     };
 }
+
 fn block_stmt(compiler: &mut Compiler) {
-
-
-
+    compiler.begin_scope(); 
+    // Keep looping so long as we don't hit the closing brace. If we hit EOF
+    // that is an error that will be caught on the subsequent consume call. 
+    while !compiler.peek(TOKEN_RIGHT_BRACE) && !compiler.peek(TOKEN_EOF) {
+        declaration(compiler);
+    }
+    compiler.consume(TOKEN_RIGHT_BRACE, "Expect closing '}' at end of block");
+    compiler.end_scope(); 
 }
 
 fn expr_stmt(compiler: &mut Compiler) {
