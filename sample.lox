@@ -1,14 +1,8 @@
-var global = 5005;
 {
 	var b1 = 5;
-	var b2 = 1;
-	print(global+b1+b2);
 	{ 
-		var b1 = 10;
-		var b2 = 15;
+		var b1 = b1;
 		print(b1);
-		print(b2);
-}
-print(b1);
-print(b2);
+	}
+		print(b1);
 }

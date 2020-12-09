@@ -97,6 +97,10 @@ impl Compiler<'_> {
         }
     }
 
+    //TODO: This does not appropriately handle shadowed variables like below
+    // var a = "outer" {
+    //  var a = a;
+    // }
     fn add_local(&mut self, name: String) -> usize {
         let local = Local { name, depth: self.scope_depth };
         self.local_count += 1;
@@ -112,7 +116,8 @@ impl Compiler<'_> {
     fn begin_scope(&mut self) {
         self.scope_depth += 1;
     }
-     fn end_scope(&mut self) -> Result<()>{
+
+    fn end_scope(&mut self) {
         while let Some(local) = self.locals.peek() {
             if local.depth == self.scope_depth {
                 self.locals.pop().unwrap();
@@ -124,7 +129,6 @@ impl Compiler<'_> {
             }
         }
         self.scope_depth -= 1;
-        Ok(())
     }
      
     // Helper to emit an error message for user consumption
