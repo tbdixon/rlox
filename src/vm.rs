@@ -24,8 +24,8 @@ impl InterpretResult {
 
 // Build our own stack so that we can use a small stack allocated bit of space
 // rather than a Vec which will continually be allocating around the heap 
-// given this is the core element of our VM. 
-const MAX_STACK_SIZE: usize = 256;
+// given this is the core element of our VM worth having much faster.
+pub const MAX_STACK_SIZE: usize = 256;
 pub struct Stack {
     top: usize,
     stack: [Option<Value>; MAX_STACK_SIZE],

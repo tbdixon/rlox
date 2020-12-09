@@ -53,26 +53,40 @@ impl fmt::Display for CompilerError {
     }
 }
 
-struct Parser<'a> {
-    parse_rules: ParseRules,
-    previous: Token,
-    current: Token,
-    tokens: Vec<Token>,
-    chunk: &'a mut Chunk,
-    had_error: bool,
-    panic_mode: bool,
+#[derive(Debug, Copy, Clone)]
+struct Local<'a> {
+    name: &'a Token,
+    depth: usize,
 }
 
-impl Parser<'_> {
-    pub fn new(tokens: Vec<Token>, chunk: &mut Chunk, parse_rules: ParseRules) -> Parser {
-        Parser {
-            parse_rules,
-            previous: Token::empty(),
-            current: Token::empty(),
+struct Compiler<'a> {
+    tokens: Vec<Token>,
+    chunk: &'a mut Chunk,
+/*-----Parser-----------*/
+    previous: Token,
+    current: Token,
+    had_error: bool,
+    panic_mode: bool,
+    parse_rules: ParseRules,
+/*-----Variables---------*/
+    locals: [Option<Local<'a>>; crate::vm::MAX_STACK_SIZE],
+    local_count: u8,
+    scope_depth: u8,
+}
+
+impl Compiler<'_> {
+    pub fn new(tokens: Vec<Token>, chunk: &mut Chunk) -> Compiler {
+        Compiler {
             tokens,
             chunk,
+            parse_rules: ParseRules::new(),
+            previous: Token::empty(),
+            current: Token::empty(),
             had_error: false,
             panic_mode: false,
+            locals: [None; crate::vm::MAX_STACK_SIZE],
+            local_count: 0,
+            scope_depth: 0,
         }
     }
 
@@ -135,7 +149,7 @@ impl Parser<'_> {
     }
 
     // Functions to handle "emitting" values which writes them to the chunk
-    // being borrowed by the parser.
+    // being borrowed by the compiler.
     fn emit_byte(&mut self, byte: u8, line: i32) {
         self.chunk.write(byte, line);
     }
@@ -195,70 +209,78 @@ impl Parser<'_> {
 /*----------------------------------------------------------------------
  Entry points to compile code
 ----------------------------------------------------------------------*/
-fn declaration(parser: &mut Parser) {
-    if parser.match_token(TOKEN_VAR) {
-        var_declaration(parser);
+fn declaration(compiler: &mut Compiler) {
+    if compiler.match_token(TOKEN_VAR) {
+        var_declaration(compiler);
     } else {
-        statement(parser);
+        statement(compiler);
     }
     // If we hit an error parsing, synchronize to the next valid point. 
     // The execution will not happen but this enables compilation to continue
     // so we grab any additional errors. 
-    if parser.panic_mode {
-        parser.synchronize();
+    if compiler.panic_mode {
+        compiler.synchronize();
     }
 }
 
-fn var_declaration(parser: &mut Parser) {
-    parser.consume(TOKEN_IDENTIFIER, "Expect variable name");
-    parser.emit_constant(Value::Str(String::from(&parser.previous.lexeme)));
-    if parser.match_token(TOKEN_EQUAL) {
-        expression(parser);
+fn var_declaration(compiler: &mut Compiler) {
+    compiler.consume(TOKEN_IDENTIFIER, "Expect variable name");
+    compiler.emit_constant(Value::Str(compiler.previous.lexeme.to_string()));
+    if compiler.match_token(TOKEN_EQUAL) {
+        expression(compiler);
     } else {
-        parser.emit_byte(OP_NIL as u8, parser.previous.line_num);
+        compiler.emit_byte(OP_NIL as u8, compiler.previous.line_num);
     }
-    parser.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
-    parser.emit_byte(OP_DEFINE_GLOBAL as u8, parser.previous.line_num);
+    compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
+    compiler.emit_byte(OP_DEFINE_GLOBAL as u8, compiler.previous.line_num);
 }
 
-fn statement(parser: &mut Parser) {
-    if parser.match_token(TOKEN_PRINT) {
-        print_stmt(parser);
-    } else {
-        expr_stmt(parser);
+fn statement(compiler: &mut Compiler) {
+    if compiler.match_token(TOKEN_PRINT) {
+        print_stmt(compiler);
+    } else if compiler.match_token(TOKEN_LEFT_BRACE) {
+        block_stmt(compiler);
+    }
+    else{
+        expr_stmt(compiler);
     };
 }
+fn block_stmt(compiler: &mut Compiler) {
 
-fn expr_stmt(parser: &mut Parser) {
-    let line_num = parser.current.line_num;
-    expression(parser);
-    parser.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
-    parser.emit_byte(OP_POP as u8, line_num);
+
+
 }
 
-fn print_stmt(parser: &mut Parser) {
-    let line_num = parser.previous.line_num;
-    expression(parser);
-    parser.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
-    parser.emit_byte(OP_PRINT as u8, line_num);
+fn expr_stmt(compiler: &mut Compiler) {
+    let line_num = compiler.current.line_num;
+    expression(compiler);
+    compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
+    compiler.emit_byte(OP_POP as u8, line_num);
 }
 
-fn expression(parser: &mut Parser) {
-    parser.parse_precedence(PREC_ASSIGNMENT);
+fn print_stmt(compiler: &mut Compiler) {
+    let line_num = compiler.previous.line_num;
+    expression(compiler);
+    compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
+    compiler.emit_byte(OP_PRINT as u8, line_num);
+}
+
+fn expression(compiler: &mut Compiler) {
+    compiler.parse_precedence(PREC_ASSIGNMENT);
 }
 
 /*----------------------------------------------------------------------
  Functions that are used in the Parse Precedence map and called to 
- actually compile the source code with a mutable refernce to the parser
+ actually compile the source code with a mutable refernce to the compiler
 ----------------------------------------------------------------------*/
-fn grouping(parser: &mut Parser, _: bool) {
-    expression(parser);
-    parser.consume(TOKEN_RIGHT_PAREN, "Expect closing ')'");
+fn grouping(compiler: &mut Compiler, _: bool) {
+    expression(compiler);
+    compiler.consume(TOKEN_RIGHT_PAREN, "Expect closing ')'");
 }
 
-fn binary(parser: &mut Parser) {
-    let op = parser.previous.kind;
-    let op_line = parser.previous.line_num;
+fn binary(compiler: &mut Compiler) {
+    let op = compiler.previous.kind;
+    let op_line = compiler.previous.line_num;
     // We explicitly call this function based on the below operators being found.
     // Covering the _ case for exhausting but will never hit.
     let precedence = match op {
@@ -269,80 +291,80 @@ fn binary(parser: &mut Parser) {
         TOKEN_VAR => PREC_ASSIGNMENT,
         _ => PREC_NONE,
     };
-    parser.parse_precedence(Precedence::from_u8(precedence as u8 + 1));
+    compiler.parse_precedence(Precedence::from_u8(precedence as u8 + 1));
     match op {
-        TOKEN_PLUS => parser.emit_byte(OP_ADD as u8, op_line),
-        TOKEN_MINUS => parser.emit_byte(OP_SUBTRACT as u8, op_line),
-        TOKEN_STAR => parser.emit_byte(OP_MULTIPLY as u8, op_line),
-        TOKEN_SLASH => parser.emit_byte(OP_DIVIDE as u8, op_line),
-        TOKEN_EQUAL_EQUAL => parser.emit_byte(OP_EQUAL as u8, op_line),
-        TOKEN_BANG_EQUAL => parser.emit_bytes(OP_EQUAL as u8, OP_NOT as u8, op_line),
-        TOKEN_GREATER => parser.emit_byte(OP_GREATER as u8, op_line),
-        TOKEN_LESS => parser.emit_byte(OP_LESS as u8, op_line),
-        TOKEN_GREATER_EQUAL => parser.emit_bytes(OP_LESS as u8, OP_NOT as u8, op_line),
-        TOKEN_LESS_EQUAL => parser.emit_bytes(OP_GREATER as u8, OP_NOT as u8, op_line),
-        _ => parser.parse_error("Invalid binary operator"),
+        TOKEN_PLUS => compiler.emit_byte(OP_ADD as u8, op_line),
+        TOKEN_MINUS => compiler.emit_byte(OP_SUBTRACT as u8, op_line),
+        TOKEN_STAR => compiler.emit_byte(OP_MULTIPLY as u8, op_line),
+        TOKEN_SLASH => compiler.emit_byte(OP_DIVIDE as u8, op_line),
+        TOKEN_EQUAL_EQUAL => compiler.emit_byte(OP_EQUAL as u8, op_line),
+        TOKEN_BANG_EQUAL => compiler.emit_bytes(OP_EQUAL as u8, OP_NOT as u8, op_line),
+        TOKEN_GREATER => compiler.emit_byte(OP_GREATER as u8, op_line),
+        TOKEN_LESS => compiler.emit_byte(OP_LESS as u8, op_line),
+        TOKEN_GREATER_EQUAL => compiler.emit_bytes(OP_LESS as u8, OP_NOT as u8, op_line),
+        TOKEN_LESS_EQUAL => compiler.emit_bytes(OP_GREATER as u8, OP_NOT as u8, op_line),
+        _ => compiler.parse_error("Invalid binary operator"),
     }
 }
-fn number(parser: &mut Parser, _: bool) {
-    match parser.previous.lexeme.parse::<f64>() {
+fn number(compiler: &mut Compiler, _: bool) {
+    match compiler.previous.lexeme.parse::<f64>() {
         Ok(constant_value) => {
-            parser.emit_constant(Value::Number(constant_value));
+            compiler.emit_constant(Value::Number(constant_value));
         }
         Err(_) => {
-            parser.parse_error("Error parsing number");
+            compiler.parse_error("Error parsing number");
         }
     };
 }
 
-fn unary(parser: &mut Parser, _: bool) {
-    let op = parser.previous.kind;
-    let op_line = parser.previous.line_num;
-    parser.parse_precedence(PREC_UNARY);
+fn unary(compiler: &mut Compiler, _: bool) {
+    let op = compiler.previous.kind;
+    let op_line = compiler.previous.line_num;
+    compiler.parse_precedence(PREC_UNARY);
     match op {
-        TOKEN_MINUS => parser.emit_byte(OP_NEGATE as u8, op_line),
-        TOKEN_BANG => parser.emit_byte(OP_NOT as u8, op_line),
-        _ => parser.parse_error("Invalid unary operator"),
+        TOKEN_MINUS => compiler.emit_byte(OP_NEGATE as u8, op_line),
+        TOKEN_BANG => compiler.emit_byte(OP_NOT as u8, op_line),
+        _ => compiler.parse_error("Invalid unary operator"),
     }
 }
 
-fn literal(parser: &mut Parser, _: bool) {
-    let op_line = parser.previous.line_num;
-    match parser.previous.kind {
-        TOKEN_FALSE => parser.emit_byte(OP_FALSE as u8, op_line),
-        TOKEN_TRUE => parser.emit_byte(OP_TRUE as u8, op_line),
-        TOKEN_NIL => parser.emit_byte(OP_NIL as u8, op_line),
+fn literal(compiler: &mut Compiler, _: bool) {
+    let op_line = compiler.previous.line_num;
+    match compiler.previous.kind {
+        TOKEN_FALSE => compiler.emit_byte(OP_FALSE as u8, op_line),
+        TOKEN_TRUE => compiler.emit_byte(OP_TRUE as u8, op_line),
+        TOKEN_NIL => compiler.emit_byte(OP_NIL as u8, op_line),
         _ => {}
     }
 }
 
-fn identifier(parser: &mut Parser, can_assign: bool) {
-    let identifier = String::from(&parser.previous.lexeme);
-    let arg = parser.emit_constant(Value::Str(identifier));
-    if can_assign && parser.match_token(TOKEN_EQUAL) {
-        expression(parser);
-        parser.emit_bytes(OP_SET_GLOBAL as u8, arg as u8, parser.previous.line_num);
+fn identifier(compiler: &mut Compiler, can_assign: bool) {
+    let identifier = compiler.previous.lexeme.to_string();
+    let arg = compiler.emit_constant(Value::Str(identifier));
+    if can_assign && compiler.match_token(TOKEN_EQUAL) {
+        expression(compiler);
+        compiler.emit_bytes(OP_SET_GLOBAL as u8, arg as u8, compiler.previous.line_num);
     } else {
-        parser.emit_byte(OP_GET_GLOBAL as u8, parser.previous.line_num);
+        compiler.emit_byte(OP_GET_GLOBAL as u8, compiler.previous.line_num);
     }
 }
 
-fn string(parser: &mut Parser, _: bool) {
-    let lexeme = &parser.previous.lexeme;
+fn string(compiler: &mut Compiler, _: bool) {
+    let lexeme = &compiler.previous.lexeme;
     let string = String::from(&lexeme[1..lexeme.len() - 1]);
-    parser.emit_constant(Value::Str(string));
+    compiler.emit_constant(Value::Str(string));
 }
 
 /*----------------------------------------------------------------------
  * A struct used to store the parse rules and precedence for each of the 
- * tokens in the Lox language. This wraps a map so that the Pratt parser
+ * tokens in the Lox language. This wraps a map so that the Pratt compiler
  * can call the appropriate function when it encounters a given token
  * as a prefix or infix. 
 ----------------------------------------------------------------------*/
 struct ParseRule {
     precedence: Precedence,
-    prefix: Option<&'static dyn Fn(&mut Parser, bool)>,
-    infix: Option<&'static dyn Fn(&mut Parser)>,
+    prefix: Option<&'static dyn Fn(&mut Compiler, bool)>,
+    infix: Option<&'static dyn Fn(&mut Compiler)>,
 }
 
 struct ParseRules(HashMap<TokenType, ParseRule>);
@@ -384,14 +406,14 @@ impl ParseRules {
         self.0.get(&kind)
     }
 
-    pub fn get_prefix(&self, kind: TokenType) -> Option<&'static dyn Fn(&mut Parser, bool)> {
+    pub fn get_prefix(&self, kind: TokenType) -> Option<&'static dyn Fn(&mut Compiler, bool)> {
         if let Some(parse_rule) = self.get(kind) {
             parse_rule.prefix
         } else {
             None
         }
     }
-    pub fn get_infix(&self, kind: TokenType) -> Option<&'static dyn Fn(&mut Parser)> {
+    pub fn get_infix(&self, kind: TokenType) -> Option<&'static dyn Fn(&mut Compiler)> {
         if let Some(parse_rule) = self.get(kind) {
             parse_rule.infix
         } else {
@@ -413,14 +435,17 @@ impl ParseRules {
 // 2. Compile the tokens and emit bytecode onto the Chunk
 pub fn compile(source: &str, chunk: &mut Chunk) -> Result<()> {
     let tokens = Scanner::new(source.trim()).scan();
-    let mut parser = Parser::new(tokens, chunk, ParseRules::new());
-    parser.advance();
-    while parser.current.kind != TOKEN_EOF {
-        declaration(&mut parser);
+    let mut compiler = Compiler::new(tokens, chunk);
+    compiler.advance();
+    while compiler.current.kind != TOKEN_EOF {
+        declaration(&mut compiler);
     }
-    parser.emit_byte(OP_RETURN as u8, parser.current.line_num);
-    disassemble_chunk(parser.chunk, "Compiling Complete");
-    if parser.had_error {
+    compiler.emit_byte(OP_RETURN as u8, compiler.current.line_num);
+    if crate::DEBUG {
+        disassemble_chunk(compiler.chunk, "Compiling Complete");
+    }
+
+    if compiler.had_error {
         Err(Box::new(CompilerError()))
     } else {
         Ok(())
