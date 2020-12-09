@@ -1,9 +1,9 @@
 #![allow(non_camel_case_types)]
 pub mod chunk;
-pub mod debug;
-pub mod vm;
-pub mod scanner;
 pub mod compiler;
+pub mod debug;
+pub mod scanner;
+pub mod vm;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

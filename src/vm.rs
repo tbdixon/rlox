@@ -4,8 +4,8 @@ use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
 use std::collections::HashMap;
-use std::mem::{discriminant, MaybeUninit, replace};
-use std::ops::{Index};
+use std::mem::{discriminant, replace, MaybeUninit};
+use std::ops::Index;
 
 type Result<T> = std::result::Result<T, InterpretResult>;
 
@@ -23,7 +23,7 @@ impl InterpretResult {
 }
 
 // Build our own stack so that we can use a small stack allocated bit of space
-// rather than a Vec which will continually be allocating around the heap 
+// rather than a Vec which will continually be allocating around the heap
 // given this is the core element of our VM worth having much faster.
 pub const MAX_STACK_SIZE: usize = 256;
 pub struct Stack {
@@ -33,7 +33,7 @@ pub struct Stack {
 
 impl Stack {
     fn new() -> Stack {
-        // Some fun unsafe rust to initialize a constant array of Option<Value> given the 
+        // Some fun unsafe rust to initialize a constant array of Option<Value> given the
         // String inside Value precludes simple Copy trait. This should avoid any problematic
         // behavior as the stack is immedietly being set to None and then used as normal.
         let stack = unsafe {
@@ -46,14 +46,15 @@ impl Stack {
         };
         Stack { top: 0, stack }
     }
-    
+
     fn is_empty(&self) -> bool {
         self.top == 0
     }
 
     fn pop(&mut self) -> Result<Value> {
         self.top -= 1;
-        replace(&mut self.stack[self.top], None).ok_or_else(|| INTERPRET_RUNTIME_ERROR("Empty stack"))
+        replace(&mut self.stack[self.top], None)
+            .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Empty stack"))
     }
 
     fn push(&mut self, v: Value) {
@@ -64,7 +65,7 @@ impl Stack {
 
 impl Index<usize> for Stack {
     type Output = Option<Value>;
-    
+
     fn index(&self, i: usize) -> &Option<Value> {
         &self.stack[i]
     }
