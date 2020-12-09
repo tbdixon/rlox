@@ -137,6 +137,15 @@ impl Chunk {
         self.constant_pool.push(value);
         self.constant_pool.len() - 1
     }
+
+    pub fn find_constant(&self, value: &Value) -> Option<usize> {
+        for (idx, constant) in self.constant_pool.iter().enumerate() {
+            if constant == value {
+                return Some(idx)
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

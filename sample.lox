@@ -1,8 +1,14 @@
-var c = 5005;
+var global = 5005;
 {
-var a = 5;
-var b = 5;
-print("brk");
-print(a+b+c);
+	var b1 = 5;
+	var b2 = 1;
+	print(global+b1+b2);
+	{ 
+		var b1 = 10;
+		var b2 = 15;
+		print(b1);
+		print(b2);
 }
-
+print(b1);
+print(b2);
+}

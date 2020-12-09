@@ -106,14 +106,25 @@ impl Compiler<'_> {
     fn resolve_local(&self, token: &Token) -> Option<usize> {
         let variable_name = String::from(&token.lexeme);
         let local = Local { name: variable_name, depth: self.scope_depth };
-        self.locals.find(local)
+        self.locals.find(local) 
     }
 
     fn begin_scope(&mut self) {
         self.scope_depth += 1;
     }
-     fn end_scope(&mut self) {
+     fn end_scope(&mut self) -> Result<()>{
+        while let Some(local) = self.locals.peek() {
+            if local.depth == self.scope_depth {
+                self.locals.pop().unwrap();
+                self.emit_byte(OP_POP as u8, self.previous.line_num);
+                self.local_count -= 1;
+            }
+            else {
+                break;
+            }
+        }
         self.scope_depth -= 1;
+        Ok(())
     }
      
     // Helper to emit an error message for user consumption
@@ -189,7 +200,13 @@ impl Compiler<'_> {
     }
 
     fn create_constant(&mut self, value: Value) -> usize {
-        let const_idx = self.chunk.add_constant(value);
+        let const_idx = if let Some(const_idx) = self.chunk.find_constant(&value) {
+            const_idx
+        }
+        else {
+            self.chunk.add_constant(value)
+        };
+        self.emit_bytes(OP_CONSTANT as u8, const_idx as u8, self.previous.line_num);
         const_idx
     }
 
@@ -278,7 +295,6 @@ fn parse_variable(compiler: &mut Compiler) -> usize {
     let variable_name = String::from(&compiler.previous.lexeme);
     if compiler.scope_depth == 0 {
         let const_idx = compiler.create_constant(Value::Str(variable_name));
-        compiler.emit_bytes(OP_CONSTANT as u8, const_idx as u8, compiler.current.line_num);
         const_idx
     }
     else {
@@ -366,8 +382,7 @@ fn binary(compiler: &mut Compiler) {
 fn number(compiler: &mut Compiler, _: bool) {
     match compiler.previous.lexeme.parse::<f64>() {
         Ok(constant_value) => {
-            let const_idx = compiler.create_constant(Value::Number(constant_value));
-            compiler.emit_bytes(OP_CONSTANT as u8, const_idx as u8, compiler.current.line_num);
+            compiler.create_constant(Value::Number(constant_value));
         }
         Err(_) => {
             compiler.parse_error("Error parsing number");
@@ -400,8 +415,10 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
     let op_set;
     let op_get;
     let arg;
+    let mut local = false;
     match compiler.resolve_local(&compiler.previous) {
         Some(v) => {
+            local = true;
             arg = v;
             op_set = OP_SET_LOCAL;
             op_get = OP_GET_LOCAL;
@@ -409,6 +426,7 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
         _ => {
             let identifier = compiler.previous.lexeme.to_string();
             arg = compiler.create_constant(Value::Str(identifier));
+            println!("global {:?}", arg);
             op_set = OP_SET_GLOBAL;
             op_get = OP_GET_GLOBAL;
         }
@@ -417,15 +435,19 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
         expression(compiler);
         compiler.emit_bytes(op_set as u8, arg as u8, compiler.previous.line_num);
     } else {
-        compiler.emit_bytes(op_get as u8, arg as u8, compiler.previous.line_num);
+        if local {
+            compiler.emit_bytes(op_get as u8, arg as u8, compiler.previous.line_num);
+        }
+        else {
+            compiler.emit_byte(op_get as u8, compiler.previous.line_num);
+        }
     }
 }
 
 fn string(compiler: &mut Compiler, _: bool) {
     let lexeme = &compiler.previous.lexeme;
     let string = String::from(&lexeme[1..lexeme.len() - 1]);
-    let const_idx = compiler.create_constant(Value::Str(string));
-    compiler.emit_bytes(OP_CONSTANT as u8, const_idx as u8, compiler.previous.line_num);
+    compiler.create_constant(Value::Str(string));
 }
 
 /*----------------------------------------------------------------------
