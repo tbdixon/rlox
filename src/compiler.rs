@@ -463,7 +463,12 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
     };
     if can_assign && compiler.match_token(TOKEN_EQUAL) {
         expression(compiler);
-        compiler.emit_bytes(op_set as u8, arg as u8, compiler.previous.line_num);
+        if local {
+            compiler.emit_bytes(op_set as u8, arg as u8, compiler.previous.line_num);
+        }
+        else {
+            compiler.emit_byte(op_set as u8, compiler.previous.line_num);
+        }
     } else {
         if local {
             compiler.emit_bytes(op_get as u8, arg as u8, compiler.previous.line_num);

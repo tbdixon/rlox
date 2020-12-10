@@ -1,10 +1,10 @@
-{
-var a = 5;
-if(2 > a) {
-var a = 15;
-var b = 20;
-var c = 25;
-print("in conditional");
+var condition = false;
+if(condition) {
+	print("Inside first if");
 }
-print("out conditional");
+print("After first if");
+condition = true;
+if(condition) {
+	print("Inside second if");
 }
+print("After second if");
