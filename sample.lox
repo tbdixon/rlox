@@ -1,10 +1,5 @@
-var condition = false;
-if(condition) {
-	print("Inside first if");
+for(var a = 0;a< 5; a = a+1){
+print(a);
 }
-print("After first if");
-condition = true;
-if(condition) {
-	print("Inside second if");
-}
-print("After second if");
+
+

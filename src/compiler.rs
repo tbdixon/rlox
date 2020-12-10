@@ -210,6 +210,15 @@ impl Compiler<'_> {
         self.chunk.count() - 2
     }
 
+    fn emit_loop(&mut self, addr: usize) {
+        let jump = (self.chunk.count() - addr + 3) as u16;
+        let high_bits = ((jump >> 8) & 0xff) as u8;
+        let low_bits = (jump & 0xff) as u8;
+        self.emit_byte(OP_LOOP as u8, self.current.line_num);
+        self.emit_byte(high_bits as u8, self.current.line_num);
+        self.emit_byte(low_bits as u8, self.current.line_num);
+    }
+
     fn patch_jump(&mut self, addr: usize) {
         let jump = (self.chunk.count() - addr - 2) as u16;
         let high_bits = ((jump >> 8) & 0xff) as u8;
@@ -219,14 +228,16 @@ impl Compiler<'_> {
     }
 
     fn create_constant(&mut self, value: Value) -> usize {
-        let const_idx = if let Some(const_idx) = self.chunk.find_constant(&value) {
+        if let Some(const_idx) = self.chunk.find_constant(&value) {
             const_idx
         }
         else {
             self.chunk.add_constant(value)
-        };
-        self.emit_bytes(OP_CONSTANT as u8, const_idx as u8, self.previous.line_num);
-        const_idx
+        }
+    }
+
+    fn emit_constant(&mut self, const_idx: usize) {
+       self.emit_bytes(OP_CONSTANT as u8, const_idx as u8, self.previous.line_num);
     }
 
     // Play forward until a statement so we can try to being compilation again there.
@@ -314,6 +325,7 @@ fn parse_variable(compiler: &mut Compiler) -> usize {
     let variable_name = String::from(&compiler.previous.lexeme);
     if compiler.scope_depth == 0 {
         let const_idx = compiler.create_constant(Value::Str(variable_name));
+        compiler.emit_constant(const_idx);
         const_idx
     }
     else {
@@ -325,7 +337,11 @@ fn statement(compiler: &mut Compiler) {
     if compiler.match_token(TOKEN_PRINT) {
         print_stmt(compiler);
     } else if compiler.match_token(TOKEN_IF) {
-        if_statement(compiler);
+        if_else_statement(compiler);
+    } else if compiler.match_token(TOKEN_WHILE) {
+        while_(compiler);
+    } else if compiler.match_token(TOKEN_FOR) {
+        for_(compiler);
     } else if compiler.match_token(TOKEN_LEFT_BRACE) {
         compiler.begin_scope(); 
         block_stmt(compiler);
@@ -336,13 +352,81 @@ fn statement(compiler: &mut Compiler) {
     };
 }
 
-fn if_statement(compiler: &mut Compiler) {
+fn while_(compiler: &mut Compiler) {
+    let loop_start_addr = compiler.chunk.count();
+    compiler.consume(TOKEN_LEFT_PAREN, "Expect opening '(' at start of while loop");
+    expression(compiler);
+    compiler.consume(TOKEN_RIGHT_PAREN, "Expect closing ')' at end of while loop");
+    let loop_end = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
+    statement(compiler);
+    compiler.emit_loop(loop_start_addr);
+    compiler.patch_jump(loop_end);
+    compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
+}
+
+fn for_(compiler: &mut Compiler) {
+    compiler.begin_scope();
+    compiler.consume(TOKEN_LEFT_PAREN, "Expect opening '(' at start of for loop");
+
+    // Handle the initializer for(var i = 0;) for(i=0) for(;)
+    if !compiler.match_token(TOKEN_SEMICOLON) {
+        if compiler.match_token(TOKEN_VAR) {
+            var_declaration(compiler);
+        } else {
+            expr_stmt(compiler);
+        }
+    }
+    
+    // Condition check
+    let mut loop_start_addr = compiler.chunk.count();
+    let mut exit_jump = None; // OP_JUMP_NOT_EQUAL at the start of the loop
+    let mut condition_start = None; // OP_LOOP to the condition if required (e.g. if there is an increment)
+    if !compiler.match_token(TOKEN_SEMICOLON) {
+        condition_start = Some(compiler.chunk.count());
+        expression(compiler);
+        exit_jump = Some(compiler.emit_jump(OP_JUMP_IF_FALSE));
+        compiler.emit_byte(OP_POP as u8,compiler.current.line_num);
+        compiler.consume(TOKEN_SEMICOLON, "Expect opening ';' after loop condition");
+    } 
+    
+    if !compiler.match_token(TOKEN_RIGHT_PAREN) {
+        let condition_end_jump = compiler.emit_jump(OP_JUMP);
+        loop_start_addr = compiler.chunk.count();
+        expression(compiler);
+        compiler.consume(TOKEN_RIGHT_PAREN, "Expect closing ')' at end of for loop");
+        if let Some(addr) = condition_start {
+            compiler.emit_loop(addr);
+        }
+        compiler.patch_jump(condition_end_jump);
+    }
+    
+    statement(compiler);
+    compiler.emit_loop(loop_start_addr); 
+    
+    // If we had a condition, hence JUMP_IF_FALSE, we need to patch that to actually jump 
+    // to the end of the body now.
+    if let Some(addr) = exit_jump {
+        compiler.patch_jump(addr);
+    }
+    compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
+    compiler.end_scope();
+}
+
+fn if_else_statement(compiler: &mut Compiler) {
     compiler.consume(TOKEN_LEFT_PAREN, "Expect opening '(' at start of if statement");
     expression(compiler);
     compiler.consume(TOKEN_RIGHT_PAREN, "Expect opening '(' at start of if statement");
-    let jump_location = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    let if_jump_location = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
     statement(compiler);
-    compiler.patch_jump(jump_location);
+    let else_jump_location = compiler.emit_jump(OP_JUMP);
+    compiler.patch_jump(if_jump_location);
+    compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
+    if compiler.match_token(TOKEN_ELSE) {
+        statement(compiler);
+    }
+    compiler.patch_jump(else_jump_location);
 }
 
 fn block_stmt(compiler: &mut Compiler) {
@@ -409,10 +493,29 @@ fn binary(compiler: &mut Compiler) {
         _ => compiler.parse_error("Invalid binary operator"),
     }
 }
+
+fn and(compiler: &mut Compiler) {
+    let short_circuit = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
+    compiler.parse_precedence(PREC_AND);
+    compiler.patch_jump(short_circuit);
+}
+
+fn or(compiler: &mut Compiler) {
+    let cont = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    let short_circuit = compiler.emit_jump(OP_JUMP);
+    compiler.patch_jump(cont);
+    compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
+    compiler.parse_precedence(PREC_OR);
+
+    compiler.patch_jump(short_circuit);
+}
+
 fn number(compiler: &mut Compiler, _: bool) {
     match compiler.previous.lexeme.parse::<f64>() {
         Ok(constant_value) => {
-            compiler.create_constant(Value::Number(constant_value));
+            let const_idx = compiler.create_constant(Value::Number(constant_value));
+            compiler.emit_constant(const_idx);
         }
         Err(_) => {
             compiler.parse_error("Error parsing number");
@@ -445,10 +548,8 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
     let op_set;
     let op_get;
     let arg;
-    let mut local = false;
     match compiler.resolve_local(&compiler.previous) {
         Some(v) => {
-            local = true;
             arg = v;
             op_set = OP_SET_LOCAL;
             op_get = OP_GET_LOCAL;
@@ -456,33 +557,24 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
         _ => {
             let identifier = compiler.previous.lexeme.to_string();
             arg = compiler.create_constant(Value::Str(identifier));
-            println!("global {:?}", arg);
             op_set = OP_SET_GLOBAL;
             op_get = OP_GET_GLOBAL;
         }
     };
     if can_assign && compiler.match_token(TOKEN_EQUAL) {
-        expression(compiler);
-        if local {
+            expression(compiler);
             compiler.emit_bytes(op_set as u8, arg as u8, compiler.previous.line_num);
-        }
-        else {
-            compiler.emit_byte(op_set as u8, compiler.previous.line_num);
-        }
+            compiler.emit_byte(OP_POP as u8, compiler.previous.line_num);
     } else {
-        if local {
             compiler.emit_bytes(op_get as u8, arg as u8, compiler.previous.line_num);
-        }
-        else {
-            compiler.emit_byte(op_get as u8, compiler.previous.line_num);
-        }
     }
 }
 
 fn string(compiler: &mut Compiler, _: bool) {
     let lexeme = &compiler.previous.lexeme;
     let string = String::from(&lexeme[1..lexeme.len() - 1]);
-    compiler.create_constant(Value::Str(string));
+    let const_idx = compiler.create_constant(Value::Str(string));
+    compiler.emit_constant(const_idx);
 }
 
 /*----------------------------------------------------------------------
@@ -504,32 +596,30 @@ impl ParseRules {
         rules.0.insert(TOKEN_EOF,           ParseRule {precedence: PREC_NONE,       prefix: None,            infix: None});
         rules.0.insert(TOKEN_NUMBER,        ParseRule {precedence: PREC_NONE,       prefix: Some(&number),   infix: None});
         rules.0.insert(TOKEN_LEFT_PAREN,    ParseRule {precedence: PREC_NONE,       prefix: Some(&grouping), infix: None});
-        
+        rules.0.insert(TOKEN_STRING,        ParseRule {precedence: PREC_NONE,       prefix: Some(&string),  infix: None});
+        rules.0.insert(TOKEN_EQUAL,         ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
+        rules.0.insert(TOKEN_VAR,           ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
+        rules.0.insert(TOKEN_IDENTIFIER,    ParseRule {precedence: PREC_NONE,       prefix: Some(&identifier), infix: None});
         rules.0.insert(TOKEN_FALSE,         ParseRule {precedence: PREC_NONE,       prefix: Some(&literal), infix: None});
         rules.0.insert(TOKEN_TRUE,          ParseRule {precedence: PREC_NONE,       prefix: Some(&literal), infix: None});
         rules.0.insert(TOKEN_BANG,          ParseRule {precedence: PREC_NONE,       prefix: Some(&unary),   infix: None});
         rules.0.insert(TOKEN_NIL,           ParseRule {precedence: PREC_NONE,       prefix: Some(&literal), infix: None});
         rules.0.insert(TOKEN_RIGHT_PAREN,   ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
         rules.0.insert(TOKEN_SEMICOLON,     ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
-
         rules.0.insert(TOKEN_MINUS,         ParseRule {precedence: PREC_TERM,       prefix: Some(&unary),   infix: Some(&binary)});
         rules.0.insert(TOKEN_PLUS,          ParseRule {precedence: PREC_TERM,       prefix: Some(&unary),   infix: Some(&binary)});
         rules.0.insert(TOKEN_STAR,          ParseRule {precedence: PREC_FACTOR,     prefix: Some(&unary),   infix: Some(&binary)});
         rules.0.insert(TOKEN_SLASH,         ParseRule {precedence: PREC_FACTOR,     prefix: Some(&unary),   infix: Some(&binary)});
-
         rules.0.insert(TOKEN_EQUAL_EQUAL,   ParseRule {precedence: PREC_EQUALITY,   prefix: None,           infix: Some(&binary)});
         rules.0.insert(TOKEN_BANG_EQUAL,    ParseRule {precedence: PREC_EQUALITY,   prefix: None,           infix: Some(&binary)});
-
         rules.0.insert(TOKEN_GREATER,       ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
         rules.0.insert(TOKEN_LESS,          ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
         rules.0.insert(TOKEN_GREATER_EQUAL, ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
         rules.0.insert(TOKEN_LESS_EQUAL,    ParseRule {precedence: PREC_COMPARISON, prefix: None,           infix: Some(&binary)});
+        rules.0.insert(TOKEN_OR,            ParseRule {precedence: PREC_OR,         prefix: None,           infix: Some(&or)});
+        rules.0.insert(TOKEN_AND,           ParseRule {precedence: PREC_AND,        prefix: None,           infix: Some(&and)});
 
-        rules.0.insert(TOKEN_STRING,        ParseRule {precedence: PREC_NONE,       prefix: Some(&string),  infix: None});
-        rules.0.insert(TOKEN_EQUAL,         ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
-        rules.0.insert(TOKEN_VAR,           ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
-        rules.0.insert(TOKEN_IDENTIFIER,    ParseRule {precedence: PREC_NONE,       prefix: Some(&identifier), infix: None});
-        rules
+       rules
     }
 
     pub fn get(&self, kind: TokenType) -> Option<&ParseRule> {

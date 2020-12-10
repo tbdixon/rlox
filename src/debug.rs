@@ -30,8 +30,8 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OP_GREATER => simple_instruction(OP_GREATER, offset),
         OP_LESS => simple_instruction(OP_LESS, offset),
         OP_PRINT => simple_instruction(OP_PRINT, offset),
-        OP_GET_GLOBAL => simple_instruction(OP_GET_GLOBAL, offset),
-        OP_SET_GLOBAL => simple_instruction(OP_SET_GLOBAL, offset),
+        OP_GET_GLOBAL => byte_instruction(OP_GET_GLOBAL, chunk, offset),
+        OP_SET_GLOBAL => byte_instruction(OP_SET_GLOBAL, chunk, offset),
         OP_DEFINE_GLOBAL => simple_instruction(OP_DEFINE_GLOBAL, offset),
         OP_POP => simple_instruction(OP_POP, offset),
         OP_GET_LOCAL => byte_instruction(OP_GET_LOCAL, chunk, offset),
@@ -71,7 +71,7 @@ pub fn jump_instruction(op_code: OpCode, sign: i8, chunk: &Chunk, offset: usize)
         offset,
         end_location
     );
-    offset + 2
+    offset + 3
 }
 
 pub fn byte_instruction(op_code: OpCode, chunk: &Chunk, offset: usize) -> usize {

@@ -174,8 +174,10 @@ impl VM {
     }
 
     fn get_variable_name(&mut self) -> Result<String> {
-        match self.stack.pop()? {
-            Value::Str(v) => Ok(v),
+        let constant_addr: usize = self.read_byte() as usize;
+        let constant = self.chunk.constant_pool[constant_addr].clone();
+        match constant {
+            Value::Str(v) => Ok(v.clone()),
             Value::Nil() | Value::Number(_) | Value::Bool(_) => {
                 return Err(INTERPRET_RUNTIME_ERROR("Variable name must be a Str"));
             }
@@ -194,19 +196,42 @@ impl VM {
 
     fn define_global(&mut self) -> Result<InterpretResult> {
         let init_val = self.stack.pop()?;
-        let var_name = self.get_variable_name()?;
-        self.globals.insert(var_name, init_val);
+        let var_name = self.stack.pop()?;
+        self.globals.insert(var_name.to_string(), init_val);
         Ok(INTERPRET_OK)
     }
 
     fn set_global(&mut self) -> Result<InterpretResult> {
-        let val = self.stack.pop()?;
         let var_name = self.get_variable_name()?;
-        if self.globals.contains_key(&var_name) {
-            self.globals.insert(var_name, val);
-            Ok(INTERPRET_OK)
+        if let Some(val) = self.stack.peek() {
+            if self.globals.contains_key(&var_name) {
+                self.globals.insert(var_name, val);
+                Ok(INTERPRET_OK)
+            } else {
+                Err(INTERPRET_RUNTIME_ERROR("Variable not definied"))
+            }
         } else {
-            Err(INTERPRET_RUNTIME_ERROR("Variable not definied"))
+            Err(INTERPRET_RUNTIME_ERROR(
+                "Invalid expression to assign global",
+            ))
+        }
+    }
+
+    fn get_jump_offset(&mut self) -> usize {
+        let high_bits = self.read_byte() as u16;
+        let low_bits = self.read_byte() as u16;
+        ((high_bits << 8) | low_bits) as usize
+    }
+
+    fn is_falsey(&self) -> bool {
+        if let Some(v) = self.stack.peek() {
+            match v {
+                Value::Bool(b) if !b => true,
+                Value::Nil() => true,
+                _ => false,
+            }
+        } else {
+            false
         }
     }
 
@@ -238,7 +263,7 @@ impl VM {
                     return Ok(INTERPRET_OK);
                 }
                 OP_POP => {
-                    let _ = self.stack.pop();
+                    let _ = self.stack.pop()?;
                     Ok(INTERPRET_OK)
                 }
                 OP_CONSTANT => {
@@ -264,12 +289,17 @@ impl VM {
                 OP_DEFINE_GLOBAL => self.define_global(),
                 OP_SET_GLOBAL => self.set_global(),
                 OP_GET_LOCAL => {
+                    // Getting a local simply entails reading it from local section (front)
+                    // of stack and then pushing that onto the stack.
                     let local_index: usize = self.read_byte() as usize;
                     let val = self.stack.get(local_index)?.clone();
                     self.stack.push(val);
                     Ok(INTERPRET_OK)
                 }
                 OP_SET_LOCAL => {
+                    // Setting a local updates the local section with what is on top of the
+                    // stack but *leaves* that on the stack since assignment is an expression
+                    // in Lox.
                     let local_index: usize = self.read_byte() as usize;
                     if let Some(new_val) = self.stack.peek() {
                         self.stack.update(local_index, new_val);
@@ -278,24 +308,24 @@ impl VM {
                         Err(INTERPRET_RUNTIME_ERROR("No value on stack to assign"))
                     }
                 }
+                // Control flow is all similar--grab the jump offset and move the ip based on that.
                 OP_JUMP_IF_FALSE => {
-                    let high_bits = self.read_byte() as u16;
-                    let low_bits = self.read_byte() as u16;
-                    let offset = ((high_bits << 8) | low_bits) as usize;
-                    if let Some(v) = self.stack.peek() {
-                        match v {
-                            Value::Bool(b) if !b => {
-                                self.ip += offset;
-                            }
-                            Value::Nil() => {
-                                self.ip += offset;
-                            }
-                            _ => {}
-                        }
-                    };
+                    let offset = self.get_jump_offset();
+                    if self.is_falsey() {
+                        self.ip += offset;
+                    }
                     Ok(INTERPRET_OK)
                 }
-                OP_JUMP | OP_LOOP => Err(INTERPRET_RUNTIME_ERROR("Not yet implemented")),
+                OP_JUMP => {
+                    let offset = self.get_jump_offset();
+                    self.ip += offset;
+                    Ok(INTERPRET_OK)
+                }
+                OP_LOOP => {
+                    let offset = self.get_jump_offset();
+                    self.ip -= offset;
+                    Ok(INTERPRET_OK)
+                }
                 OP_UNKNOWN => Err(INTERPRET_COMPILE_ERROR),
             }?;
         }

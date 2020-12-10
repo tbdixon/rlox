@@ -34,8 +34,12 @@ impl<T: std::fmt::Debug + std::cmp::PartialEq + std::clone::Clone> Stack<T> {
     }
 
     pub fn pop(&mut self) -> Result<T, &'static str> {
-        self.top -= 1;
-        replace(&mut self.stack[self.top], None).ok_or("Empty Stack")
+        if self.top > 0 {
+            self.top -= 1;
+            replace(&mut self.stack[self.top], None).ok_or("Empty stack")
+        } else {
+            Err("Empty stack")
+        }
     }
 
     pub fn peek(&self) -> Option<T> {
@@ -176,5 +180,4 @@ mod tests {
         assert_eq!(s.find(String::from("A")), Some(0 as usize));
         assert_eq!(s.top, 3);
     }
-
 }
