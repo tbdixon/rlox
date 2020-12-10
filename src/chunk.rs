@@ -29,6 +29,9 @@ pub enum OpCode {
     OP_PRINT,
     OP_GET_LOCAL,
     OP_SET_LOCAL,
+    OP_JUMP,
+    OP_JUMP_IF_FALSE,
+    OP_LOOP,
     OP_UNKNOWN = 0xFF,
 }
 use crate::chunk::OpCode::*;
@@ -57,7 +60,10 @@ impl From<OpCode> for u8 {
             OP_PRINT => 0x12,
             OP_GET_LOCAL => 0x13,
             OP_SET_LOCAL => 0x14,
-            _ => 0xFF,
+            OP_JUMP => 0x15,
+            OP_JUMP_IF_FALSE => 0x16,
+            OP_LOOP => 0x17,
+             _ => 0xFF,
         }
     }
 }
@@ -86,6 +92,9 @@ impl From<u8> for OpCode {
             0x12 => OP_PRINT,
             0x13 => OP_GET_LOCAL,
             0x14 => OP_SET_LOCAL,
+            0x15 => OP_JUMP,
+            0x16 => OP_JUMP_IF_FALSE,
+            0x17 => OP_LOOP,
             _ => OP_UNKNOWN,
         }
     }
@@ -128,9 +137,17 @@ impl Chunk {
         }
     }
 
+    pub fn count(&self) -> usize {
+        self.code.len()
+    }
+    
     pub fn write(&mut self, byte: u8, line: i32) {
         self.code.push(byte);
         self.lines.push(line);
+    }
+
+    pub fn update(&mut self, location: usize, byte: u8) {
+        self.code[location] = byte;
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {

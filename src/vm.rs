@@ -278,6 +278,24 @@ impl VM {
                         Err(INTERPRET_RUNTIME_ERROR("No value on stack to assign"))
                     }
                 }
+                OP_JUMP_IF_FALSE => {
+                    let high_bits = self.read_byte() as u16;
+                    let low_bits = self.read_byte() as u16;
+                    let offset = ((high_bits << 8) | low_bits) as usize;
+                    if let Some(v) = self.stack.peek() {
+                        match v {
+                            Value::Bool(b) if !b => {
+                                self.ip += offset;
+                            }
+                            Value::Nil() => {
+                                self.ip += offset;
+                            }
+                            _ => {}
+                        }
+                    };
+                    Ok(INTERPRET_OK)
+                }
+                OP_JUMP | OP_LOOP => Err(INTERPRET_RUNTIME_ERROR("Not yet implemented")),
                 OP_UNKNOWN => Err(INTERPRET_COMPILE_ERROR),
             }?;
         }

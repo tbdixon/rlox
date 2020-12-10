@@ -1,8 +1,10 @@
 {
-	var b1 = 5;
-	{ 
-		var b1 = b1;
-		print(b1);
-	}
-		print(b1);
+var a = 5;
+if(2 > a) {
+var a = 15;
+var b = 20;
+var c = 25;
+print("in conditional");
+}
+print("out conditional");
 }

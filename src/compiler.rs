@@ -1,4 +1,4 @@
-use crate::chunk::OpCode::*;
+use crate::chunk::OpCode::{self, *};
 use crate::chunk::{Chunk, Value, };
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
@@ -203,6 +203,21 @@ impl Compiler<'_> {
         self.chunk.write(b2, line);
     }
 
+    fn emit_jump(&mut self, op: OpCode) -> usize {
+        self.emit_byte(op as u8, self.current.line_num);
+        self.emit_byte(OP_UNKNOWN as u8, self.current.line_num);
+        self.emit_byte(OP_UNKNOWN as u8, self.current.line_num);
+        self.chunk.count() - 2
+    }
+
+    fn patch_jump(&mut self, addr: usize) {
+        let jump = (self.chunk.count() - addr - 2) as u16;
+        let high_bits = ((jump >> 8) & 0xff) as u8;
+        let low_bits = (jump & 0xff) as u8;
+        self.chunk.update(addr, high_bits);
+        self.chunk.update(addr + 1, low_bits);
+    }
+
     fn create_constant(&mut self, value: Value) -> usize {
         let const_idx = if let Some(const_idx) = self.chunk.find_constant(&value) {
             const_idx
@@ -291,7 +306,7 @@ fn var_declaration(compiler: &mut Compiler) {
     } else {
         compiler.emit_bytes(OP_SET_LOCAL as u8, var_idx as u8, compiler.previous.line_num);
     }
-    compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
+    compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of variable declaration");
 }
 
 fn parse_variable(compiler: &mut Compiler) -> usize {
@@ -309,6 +324,8 @@ fn parse_variable(compiler: &mut Compiler) -> usize {
 fn statement(compiler: &mut Compiler) {
     if compiler.match_token(TOKEN_PRINT) {
         print_stmt(compiler);
+    } else if compiler.match_token(TOKEN_IF) {
+        if_statement(compiler);
     } else if compiler.match_token(TOKEN_LEFT_BRACE) {
         compiler.begin_scope(); 
         block_stmt(compiler);
@@ -317,6 +334,15 @@ fn statement(compiler: &mut Compiler) {
     else{
         expr_stmt(compiler);
     };
+}
+
+fn if_statement(compiler: &mut Compiler) {
+    compiler.consume(TOKEN_LEFT_PAREN, "Expect opening '(' at start of if statement");
+    expression(compiler);
+    compiler.consume(TOKEN_RIGHT_PAREN, "Expect opening '(' at start of if statement");
+    let jump_location = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    statement(compiler);
+    compiler.patch_jump(jump_location);
 }
 
 fn block_stmt(compiler: &mut Compiler) {
@@ -512,6 +538,7 @@ impl ParseRules {
             None
         }
     }
+
     pub fn get_infix(&self, kind: TokenType) -> Option<&'static dyn Fn(&mut Compiler)> {
         if let Some(parse_rule) = self.get(kind) {
             parse_rule.infix

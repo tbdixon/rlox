@@ -6,7 +6,6 @@ pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     debugln!("== {} ==", name);
     debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
     let mut offset: usize = 0;
-    println!("{:?}", chunk.code);
     while offset < chunk.code.len() {
         offset = disassemble_instruction(&chunk, offset);
     }
@@ -37,6 +36,9 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OP_POP => simple_instruction(OP_POP, offset),
         OP_GET_LOCAL => byte_instruction(OP_GET_LOCAL, chunk, offset),
         OP_SET_LOCAL => byte_instruction(OP_SET_LOCAL, chunk, offset),
+        OP_JUMP_IF_FALSE => jump_instruction(OP_JUMP_IF_FALSE, 1, chunk, offset),
+        OP_JUMP => jump_instruction(OP_JUMP, 1, chunk, offset),
+        OP_LOOP => jump_instruction(OP_LOOP, -1, chunk, offset),
         OP_UNKNOWN => {
             debugln!("Unknown Opcode Encountered");
             offset + 1
@@ -48,6 +50,28 @@ pub fn simple_instruction(op_code: OpCode, offset: usize) -> usize {
     let binary_code: u8 = op_code.into();
     debugln!("{:?} ({:#04X?})", op_code, binary_code);
     offset + 1
+}
+
+pub fn jump_instruction(op_code: OpCode, sign: i8, chunk: &Chunk, offset: usize) -> usize {
+    let binary_code: u8 = op_code.into();
+    let mut jump: u16 = chunk.code[offset + 1] as u16;
+    jump <<= 8;
+    jump |= chunk.code[offset+2] as u16;
+    let mut end_location = (offset as usize) + 3;
+    if sign < 0 {
+        end_location -= jump as usize;
+    }
+    else {
+        end_location += jump as usize;
+    }
+    debugln!(
+        "{:?} ({:#04X?})\t{:04} -> {:04} ",
+        op_code,
+        binary_code,
+        offset,
+        end_location
+    );
+    offset + 2
 }
 
 pub fn byte_instruction(op_code: OpCode, chunk: &Chunk, offset: usize) -> usize {
