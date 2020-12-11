@@ -77,7 +77,7 @@ impl<T: std::fmt::Debug + std::cmp::PartialEq + std::clone::Clone> Stack<T> {
                     return Some(idx);
                 }
                 if idx == 0 {
-                    break;
+                    return None;
                 }
                 idx -= 1;
             }

@@ -8,14 +8,18 @@ pub mod stack;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const DEBUG: bool = true;
+pub static mut DEBUG: bool = true;
+pub fn debug() -> bool {
+    unsafe {
+        DEBUG
+    }
+}
 
 #[macro_export]
 macro_rules! debugln {
      ($($arg:tt)*) => {
          {
-             use super::DEBUG;
-             if(DEBUG) {
+             if(super::debug()) {
                 println!($($arg)*);
              }
          }
@@ -26,8 +30,7 @@ macro_rules! debugln {
 macro_rules! debug {
      ($($arg:tt)*) => {
          {
-            use super::DEBUG;
-            if(DEBUG) {
+            if(super::debug()) {
                 print!($($arg)*);
             }
          }

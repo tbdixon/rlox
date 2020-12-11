@@ -15,24 +15,41 @@ pub enum InterpretResult {
     INTERPRET_COMPILE_ERROR,
     INTERPRET_RUNTIME_ERROR(&'static str),
 }
-impl InterpretResult {
-    //TODO: Implement std::fmt for InterpretResult
-    fn runtime_error(&self, msg: &str) {
-        println!("Error {:?}! {}", self, msg);
+impl std::error::Error for InterpretResult {}
+impl std::fmt::Display for InterpretResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            INTERPRET_RUNTIME_ERROR(e) => write!(f, "Error encountered during execution: {}", e),
+            _ => write!(f, "Error encountered during execution"),
+        }
     }
 }
-
 impl From<&'static str> for InterpretResult {
     fn from(msg: &'static str) -> Self {
         INTERPRET_RUNTIME_ERROR(msg)
     }
 }
-
+impl From<crate::compiler::CompilerError> for InterpretResult {
+    fn from(_: crate::compiler::CompilerError) -> Self {
+        INTERPRET_COMPILE_ERROR
+    }
+}
+// A stack-based VM. IP points into the current executing instruction. Every expression should have
+// a net stack effect of 1 (leaving the result on top of the stack) and every statement should have no
+// net stack effect (leaving stack same as before).
 pub struct VM {
     pub chunk: Chunk,
     pub ip: usize,
     pub stack: Stack<Value>,
     pub globals: HashMap<String, Value>,
+}
+
+// Two functions to use as pointers for comparisions to avoid some duplication later.
+fn gt(left: f64, right: f64) -> bool {
+    left > right
+}
+fn lt(left: f64, right: f64) -> bool {
+    left < right
 }
 
 use crate::vm::InterpretResult::*;
@@ -46,7 +63,10 @@ impl VM {
         }
     }
 
-    // TODO: Do I need to manually call drop() ever on elements of the stack?
+    // When running in REPL mode, we want a clean code chunk and stack. Globals are persistent
+    // across each line though, so you can do
+    // var a = 5; <ENTER>
+    // print(a); <ENTER>
     pub fn reset_repl(&mut self) {
         self.chunk = Chunk::new();
         self.stack = Stack::new();
@@ -54,14 +74,19 @@ impl VM {
     }
 
     fn print_globals(&self) {
-        println!("Globals: {:?}", self.globals);
+        if !self.globals.is_empty() {
+            println!("Globals: {:?}", self.globals);
+        }
     }
 
+    // Reads the next byte and moves the instruction pointer.
     fn read_byte(&mut self) -> u8 {
         self.ip += 1;
         self.chunk.code[self.ip - 1]
     }
 
+    // Very duplicated code, but as of yet I can't figure out a way to pass in a generic
+    // function that will take either f64, f64 -> f64 and String, String -> String.
     fn binary_add(&mut self) -> Result<InterpretResult> {
         let right = self.stack.pop()?;
         let left = self.stack.pop()?;
@@ -70,43 +95,19 @@ impl VM {
                 self.stack.push(Value::Number(left + right))
             }
             (Value::Str(left), Value::Str(right)) => self.stack.push(Value::Str(left + &right)),
-            (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Operators must be numbers")),
+            (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
         };
         Ok(INTERPRET_OK)
     }
 
-    fn binary_sub(&mut self) -> Result<InterpretResult> {
+    fn binary(&mut self, operator: &dyn Fn(f64, f64) -> f64) -> Result<InterpretResult> {
         let right = self.stack.pop()?;
         let left = self.stack.pop()?;
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
-                self.stack.push(Value::Number(left - right))
+                self.stack.push(Value::Number(operator(left, right)))
             }
-            (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Operators must be numbers")),
-        };
-        Ok(INTERPRET_OK)
-    }
-
-    fn binary_mult(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop()?;
-        let left = self.stack.pop()?;
-        match (left, right) {
-            (Value::Number(left), Value::Number(right)) => {
-                self.stack.push(Value::Number(left * right))
-            }
-            (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Operators must be numbers")),
-        };
-        Ok(INTERPRET_OK)
-    }
-
-    fn binary_div(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop()?;
-        let left = self.stack.pop()?;
-        match (left, right) {
-            (Value::Number(left), Value::Number(right)) => {
-                self.stack.push(Value::Number(left / right))
-            }
-            (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Operators must be numbers")),
+            (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
         };
         Ok(INTERPRET_OK)
     }
@@ -138,23 +139,11 @@ impl VM {
         ))
     }
 
-    fn greater(&mut self) -> Result<InterpretResult> {
+    fn cmp(&mut self, op: &dyn Fn(f64, f64) -> bool) -> Result<InterpretResult> {
         let right = self.stack.pop()?;
         let left = self.stack.pop()?;
         match (left, right) {
-            (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(left > right)),
-            _ => {
-                return Err(INTERPRET_RUNTIME_ERROR(
-                    "Comparison operands must be numbers.",
-                ))
-            }
-        }
-    }
-    fn less(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop()?;
-        let left = self.stack.pop()?;
-        match (left, right) {
-            (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(left < right)),
+            (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(op(left, right))),
             _ => {
                 return Err(INTERPRET_RUNTIME_ERROR(
                     "Comparison operands must be numbers.",
@@ -175,12 +164,10 @@ impl VM {
 
     fn get_variable_name(&mut self) -> Result<String> {
         let constant_addr: usize = self.read_byte() as usize;
-        let constant = self.chunk.constant_pool[constant_addr].clone();
+        let constant = &self.chunk.constant_pool[constant_addr];
         match constant {
             Value::Str(v) => Ok(v.clone()),
-            Value::Nil() | Value::Number(_) | Value::Bool(_) => {
-                return Err(INTERPRET_RUNTIME_ERROR("Variable name must be a Str"));
-            }
+            _ => Err(INTERPRET_RUNTIME_ERROR("Variable name must be a Str")),
         }
     }
 
@@ -203,55 +190,54 @@ impl VM {
 
     fn set_global(&mut self) -> Result<InterpretResult> {
         let var_name = self.get_variable_name()?;
-        if let Some(val) = self.stack.peek() {
-            if self.globals.contains_key(&var_name) {
-                self.globals.insert(var_name, val);
-                Ok(INTERPRET_OK)
-            } else {
-                Err(INTERPRET_RUNTIME_ERROR("Variable not definied"))
-            }
+        // Peek the value off since assignment is an expression so it should leave the expression
+        // output (the assignment value) on the stack.
+        //
+        // a = b = 5
+        let val = self
+            .stack
+            .peek()
+            .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Invalid assigment"))?;
+        if self.globals.contains_key(&var_name) {
+            self.globals.insert(var_name, val);
+            Ok(INTERPRET_OK)
         } else {
-            Err(INTERPRET_RUNTIME_ERROR(
-                "Invalid expression to assign global",
-            ))
+            Err(INTERPRET_RUNTIME_ERROR("Variable not definied"))
         }
     }
 
+    // Pulls the two bytes that make up the 16 bit jump offset and return this
+    // offset (to be used to increment / decrement the instruction pointer).
     fn get_jump_offset(&mut self) -> usize {
         let high_bits = self.read_byte() as u16;
         let low_bits = self.read_byte() as u16;
         ((high_bits << 8) | low_bits) as usize
     }
 
-    fn is_falsey(&self) -> bool {
-        if let Some(v) = self.stack.peek() {
-            match v {
-                Value::Bool(b) if !b => true,
-                Value::Nil() => true,
-                _ => false,
-            }
-        } else {
-            false
+    // Definition of 'false' in rlox world
+    fn is_falsey(&self) -> Result<bool> {
+        match self
+            .stack
+            .peek()
+            .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Missing expression for false"))?
+        {
+            Value::Bool(b) if !b => Ok(true),
+            Value::Nil() => Ok(true),
+            _ => Ok(false),
         }
     }
 
-    pub fn interpret(&mut self, source: &str) {
-        // Print parsing errors during compilation, so if the result is not Ok
-        // just return and finish the VM process.
-        if let Ok(_) = compile(source, &mut self.chunk) {
-            match self.run() {
-                Ok(_) => {}
-                Err(e) => e.runtime_error(
-                    &format!("[line {}] in script\n", self.chunk.lines[self.ip - 1])[..],
-                ),
-            }
-        }
+    // Main entry point into the VM -- compile and run.
+    pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
+        compile(source, &mut self.chunk)?;
+        self.run()?;
+        Ok(INTERPRET_OK)
     }
 
     fn run(&mut self) -> Result<InterpretResult> {
         debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
         loop {
-            if crate::DEBUG {
+            if crate::debug() {
                 println!("-----------------------------------------------------------------");
                 self.stack.print_stack();
                 self.print_globals();
@@ -274,16 +260,16 @@ impl VM {
                 }
                 OP_NEGATE => self.negate(),
                 OP_ADD => self.binary_add(),
-                OP_MULTIPLY => self.binary_mult(),
-                OP_SUBTRACT => self.binary_sub(),
-                OP_DIVIDE => self.binary_div(),
+                OP_MULTIPLY => self.binary(&std::ops::Mul::mul),
+                OP_SUBTRACT => self.binary(&std::ops::Sub::sub),
+                OP_DIVIDE => self.binary(&std::ops::Div::div),
                 OP_NIL => self.push(Value::Nil()),
                 OP_TRUE => self.push(Value::Bool(true)),
                 OP_FALSE => self.push(Value::Bool(false)),
                 OP_NOT => self.not(),
                 OP_EQUAL => self.equal(),
-                OP_GREATER => self.greater(),
-                OP_LESS => self.less(),
+                OP_GREATER => self.cmp(&gt),
+                OP_LESS => self.cmp(&lt),
                 OP_PRINT => self.print(),
                 OP_GET_GLOBAL => self.get_global(),
                 OP_DEFINE_GLOBAL => self.define_global(),
@@ -311,7 +297,7 @@ impl VM {
                 // Control flow is all similar--grab the jump offset and move the ip based on that.
                 OP_JUMP_IF_FALSE => {
                     let offset = self.get_jump_offset();
-                    if self.is_falsey() {
+                    if self.is_falsey()? {
                         self.ip += offset;
                     }
                     Ok(INTERPRET_OK)

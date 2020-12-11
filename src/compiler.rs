@@ -3,7 +3,6 @@ use crate::chunk::{Chunk, Value, };
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
 use crate::debug::disassemble_chunk;
-use crate::Result;
 use crate::stack::*;
 use std::collections::HashMap;
 use std::error::Error;
@@ -46,7 +45,7 @@ impl Precedence {
 }
 
 #[derive(Debug)]
-struct CompilerError();
+pub struct CompilerError();
 impl Error for CompilerError {}
 impl fmt::Display for CompilerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -77,10 +76,16 @@ struct Compiler<'a> {
     parse_rules: ParseRules,
 /*-----Variables---------*/
     locals: Stack<Local>,
-    local_count: u8,
     scope_depth: u8,
 }
 
+fn create_jump_offset(jump_offset: usize) -> (u8,u8) {
+        let jump_u16 = jump_offset as u16;
+        let high_bits = ((jump_u16 >> 8) & 0xff) as u8;
+        let low_bits = (jump_u16 & 0xff) as u8;
+        (high_bits, low_bits)
+}
+ 
 impl Compiler<'_> {
     pub fn new(tokens: Vec<Token>, chunk: &mut Chunk) -> Compiler {
         Compiler {
@@ -92,7 +97,6 @@ impl Compiler<'_> {
             had_error: false,
             panic_mode: false,
             locals: Stack::new(),
-            local_count: 0,
             scope_depth: 0,
         }
     }
@@ -103,10 +107,11 @@ impl Compiler<'_> {
     // }
     fn add_local(&mut self, name: String) -> usize {
         let local = Local { name, depth: self.scope_depth };
-        self.local_count += 1;
         self.locals.push(local)
     }
 
+    // Looks for and returns the index of a local variable by name starting in current
+    // depth / scope and woring backwards. None if not found. 
     fn resolve_local(&self, token: &Token) -> Option<usize> {
         let variable_name = String::from(&token.lexeme);
         let local = Local { name: variable_name, depth: self.scope_depth };
@@ -117,21 +122,25 @@ impl Compiler<'_> {
         self.scope_depth += 1;
     }
 
+    // At the end of a scope we need to pop the locals off the stack
     fn end_scope(&mut self) {
-        while let Some(local) = self.locals.peek() {
+        let mut current = self.locals.peek();
+        while let Some(local) = current {
             if local.depth == self.scope_depth {
                 self.locals.pop().unwrap();
                 self.emit_byte(OP_POP as u8, self.previous.line_num);
-                self.local_count -= 1;
+                current = self.locals.peek();
             }
             else {
-                break;
+                current = None
             }
         }
         self.scope_depth -= 1;
     }
      
-    // Helper to emit an error message for user consumption
+    // Emit errors and set the flags to ensure a program with compiler 
+    // errors does not run. Also sets the start of synchonrization to next 
+    // valid spot in source code. 
     fn parse_error(&mut self, msg: &'static str) {
         self.had_error = true;
         if !self.panic_mode {
@@ -157,7 +166,7 @@ impl Compiler<'_> {
             self.previous = take(&mut self.current);
             self.current = self.tokens.pop().unwrap_or(Token::error(
                 self.previous.line_num,
-                "Error encountered while compiling".to_string(),
+                "Error reading token".to_string(),
             ));
             if self.current.is_error() {
                 self.parse_error("Error encountered while compiling");
@@ -167,9 +176,12 @@ impl Compiler<'_> {
         }
     }
 
-    // Helper that consumes and advances if there is a specific type of
+    // Consumes and advances if there is a specific type of
     // token encountered e.g. to consume the closing ")" in a grouping
     // this will ensure that token is found and then advance beyond it.
+    //
+    // This requires the next token be expected type or else it is 
+    // an error. See match_advance for a less restrictive consumption.
     fn consume(&mut self, expected: TokenType, msg: &'static str) {
         if self.current.kind == expected {
             self.advance();
@@ -180,7 +192,7 @@ impl Compiler<'_> {
 
     // Similar to consume, but is not an error if the token does not 
     // match.
-    fn match_token(&mut self, expected: TokenType) -> bool {
+    fn match_advance(&mut self, expected: TokenType) -> bool {
         if self.current.kind == expected {
             self.advance();
             return true;
@@ -202,7 +214,21 @@ impl Compiler<'_> {
         self.chunk.write(b1, line);
         self.chunk.write(b2, line);
     }
+    
+    // Emits bytecode to read a constant at const_idx onto the VM stack
+    fn emit_read_constant(&mut self, const_idx: usize) {
+       self.emit_bytes(OP_CONSTANT as u8, const_idx as u8, self.previous.line_num);
+    }
 
+    // A jump emits as a jump operation followed by two bytes of UNKNOWN
+    // memory that will later be patched. This memory represents the jump 
+    // *offset* that will be executed, not the specific address in memory to jump
+    // to. 
+    //
+    // Returns the address to patch the high bits for jump instruction (B) below.
+    //
+    // [JUMP | HIGH_BITS | LOW_BITS | ...]
+    //   A         B          C
     fn emit_jump(&mut self, op: OpCode) -> usize {
         self.emit_byte(op as u8, self.current.line_num);
         self.emit_byte(OP_UNKNOWN as u8, self.current.line_num);
@@ -210,46 +236,46 @@ impl Compiler<'_> {
         self.chunk.count() - 2
     }
 
+    // Per emit_jump this is the patching logic that replaces the UNKNOWN
+    // code with the offset to jump. 
+    //
+    // Input is the address the patch (see emit_jump) and this is patched to jump
+    // to the current memory location. That location is determined by the
+    // chunk.count() [Total Instructions] - [Patch Addr] - 2. -2 is due to the 
+    // actual VM moving the IP forward by 2 when reading the jump offset. 
+    fn patch_jump(&mut self, addr: usize) {
+        let (high_bits, low_bits) = create_jump_offset(self.chunk.count() - addr - 2);
+        self.chunk.update(addr, high_bits);
+        self.chunk.update(addr + 1, low_bits);
+    }
+
+    // Loops don't need to be patched, so single step takes in an address that represents the start
+    // of a loop and emits OP_LOOP | HIGH BITS | LOW BITS.
+    //
+    // The offset has 3 added to it to make up for the IP moving forward in the VM by 3 when
+    // actually reading the jump instruction + offset bytes. 
     fn emit_loop(&mut self, addr: usize) {
-        let jump = (self.chunk.count() - addr + 3) as u16;
-        let high_bits = ((jump >> 8) & 0xff) as u8;
-        let low_bits = (jump & 0xff) as u8;
+        let (high_bits, low_bits) = create_jump_offset(self.chunk.count() - addr + 3);
         self.emit_byte(OP_LOOP as u8, self.current.line_num);
         self.emit_byte(high_bits as u8, self.current.line_num);
         self.emit_byte(low_bits as u8, self.current.line_num);
     }
 
-    fn patch_jump(&mut self, addr: usize) {
-        let jump = (self.chunk.count() - addr - 2) as u16;
-        let high_bits = ((jump >> 8) & 0xff) as u8;
-        let low_bits = (jump & 0xff) as u8;
-        self.chunk.update(addr, high_bits);
-        self.chunk.update(addr + 1, low_bits);
-    }
 
+    // Creates a constant by putting it into the constant_pool on the code Chunk. If that constant
+    // already exists in there just return the index into that. 
     fn create_constant(&mut self, value: Value) -> usize {
-        if let Some(const_idx) = self.chunk.find_constant(&value) {
-            const_idx
+        match self.chunk.find_constant(&value) {
+            Some(const_idx) => const_idx,
+            _ => self.chunk.add_constant(value)
         }
-        else {
-            self.chunk.add_constant(value)
-        }
-    }
-
-    fn emit_constant(&mut self, const_idx: usize) {
-       self.emit_bytes(OP_CONSTANT as u8, const_idx as u8, self.previous.line_num);
     }
 
     // Play forward until a statement so we can try to being compilation again there.
     fn synchronize(&mut self) {
         self.panic_mode = false;
-        while self.current.kind != TOKEN_EOF {
-            if self.previous.kind == TOKEN_SEMICOLON {
-                break;
-            }
-            else {
-                self.advance();
-            }
+        while self.current.kind != TOKEN_EOF && self.previous.kind != TOKEN_SEMICOLON{
+            self.advance();
         }
     }
        
@@ -258,14 +284,47 @@ impl Compiler<'_> {
     // if they are greater than or equal precedence. 
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
+        // Check that the current precedene is lower than ASSIGNMENT precedence. This gets
+        // plumbed through the parsing functions to determine if we can assign to a variable.
+        //
+        // a * b = c + d;
+        // ----^
+        //      a * b infix is too high precedence to assign, in other words 'b' should not be 
+        //      treated as an assignment here. 
         let can_assign = precedence <= PREC_ASSIGNMENT;
+        // The lookup for prefix function--always done first since when we hit a new token it is
+        // by construction a prefix from its own perspective. 
+        //
+        // a = 1 + 2;
+        //-----^
+        //   prefix
+        //-------^
+        //     infix
+        //---------^
+        //       prefix
         if let Some(prefix_fn) = self.parse_rules.get_prefix(self.previous.kind) {
             prefix_fn(self, can_assign);
         } else {
-            println!("{:?}", self.previous);
             self.parse_error("Expect expression for prefix");
         }
+        
         //println!("Precedence: {:?}. Previous: {:?}. Current: {:?}",precedence, self.previous, self.current);
+        
+        // So long as the precedence being parsed is lower than the next token we can continue
+        // parsing that as an infix operator. After parsing the 4 (as a prefix and emitting an
+        // OP_CONSTANT) we get to the '-' as an infix but this has a lower precedence than '*' so
+        // we end parsing and compute 3 * 4 first (as expected).
+        // a = 3 * 4 - 2 == 10 != 6
+        //-----^
+        //   prefix
+        //-------^
+        //     infix [MULT]
+        //---------^
+        //       prefix
+        //-----------^
+        //          infix [SUB]
+        //-------------^
+        //            prefix
         while precedence <= self.parse_rules.get_precedence(self.current.kind).unwrap() {
             self.advance();
             if let Some(infix_fn) = self.parse_rules.get_infix(self.previous.kind) {
@@ -275,7 +334,9 @@ impl Compiler<'_> {
                 self.parse_error("Expect expression for infix");
             }
         }
-        if can_assign && self.match_token(TOKEN_EQUAL) {
+        // Final check to make sure didn't have some odd input that was written as an assignment
+        // precedence not followed by '='.
+        if can_assign && self.match_advance(TOKEN_EQUAL) {
             self.parse_error("Invalid assignment target.");
         }
     }
@@ -285,7 +346,7 @@ impl Compiler<'_> {
  Entry points to compile code
 ----------------------------------------------------------------------*/
 fn declaration(compiler: &mut Compiler) {
-    if compiler.match_token(TOKEN_VAR) {
+    if compiler.match_advance(TOKEN_VAR) {
         var_declaration(compiler);
     } else {
         statement(compiler);
@@ -299,13 +360,13 @@ fn declaration(compiler: &mut Compiler) {
 }
 
 fn var_declaration(compiler: &mut Compiler) {
-    // Parse the variable and add the name to constant table / local stack
+    // Parse the variable and add the name to constant table / local stack.
     let var_idx = parse_variable(compiler);
     
     // Grab the value that the variable will be initialized as. Either there is
     // an = in which case parse the expression otherwise all variables start
     // out as Nil. Emit this onto the stack.
-    if compiler.match_token(TOKEN_EQUAL) {
+    if compiler.match_advance(TOKEN_EQUAL) {
         expression(compiler);
     } else {
         compiler.emit_byte(OP_NIL as u8, compiler.previous.line_num);
@@ -320,12 +381,15 @@ fn var_declaration(compiler: &mut Compiler) {
     compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of variable declaration");
 }
 
+// If we are in a variable declaration, handles adding that variable name to either the constant
+// pool (global) or into the local variable stack. Determines this simply based on the current
+// scope_depth of the compiler.
 fn parse_variable(compiler: &mut Compiler) -> usize {
     compiler.consume(TOKEN_IDENTIFIER, "Expect variable name");
     let variable_name = String::from(&compiler.previous.lexeme);
     if compiler.scope_depth == 0 {
         let const_idx = compiler.create_constant(Value::Str(variable_name));
-        compiler.emit_constant(const_idx);
+        compiler.emit_read_constant(const_idx);
         const_idx
     }
     else {
@@ -333,16 +397,17 @@ fn parse_variable(compiler: &mut Compiler) -> usize {
     }
 }
 
+// Basic switch for statement types.
 fn statement(compiler: &mut Compiler) {
-    if compiler.match_token(TOKEN_PRINT) {
+    if compiler.match_advance(TOKEN_PRINT) {
         print_stmt(compiler);
-    } else if compiler.match_token(TOKEN_IF) {
+    } else if compiler.match_advance(TOKEN_IF) {
         if_else_statement(compiler);
-    } else if compiler.match_token(TOKEN_WHILE) {
+    } else if compiler.match_advance(TOKEN_WHILE) {
         while_(compiler);
-    } else if compiler.match_token(TOKEN_FOR) {
+    } else if compiler.match_advance(TOKEN_FOR) {
         for_(compiler);
-    } else if compiler.match_token(TOKEN_LEFT_BRACE) {
+    } else if compiler.match_advance(TOKEN_LEFT_BRACE) {
         compiler.begin_scope(); 
         block_stmt(compiler);
         compiler.end_scope(); 
@@ -352,16 +417,29 @@ fn statement(compiler: &mut Compiler) {
     };
 }
 
+/*---------------------------------------------------------------------------------------
+* Control flow functions
+*---------------------------------------------------------------------------------------*/
+
 fn while_(compiler: &mut Compiler) {
+    // Save the current address to use later when emitting the loop instruction at the
+    // end of the while loop.
     let loop_start_addr = compiler.chunk.count();
     compiler.consume(TOKEN_LEFT_PAREN, "Expect opening '(' at start of while loop");
+    // Compile the loop condition (which will leave it at the top of the stack)
     expression(compiler);
     compiler.consume(TOKEN_RIGHT_PAREN, "Expect closing ')' at end of while loop");
+    // Conditional jump if the loop expression is false--to be patched with the end of the loop
+    // once body is compiled
     let loop_end = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    // If we don't jump, pop the loop condition result off the stack
     compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
     statement(compiler);
+    // Emit the loop instruction back to the start
     compiler.emit_loop(loop_start_addr);
+    // Patch the end of loop onto the conditional jump
     compiler.patch_jump(loop_end);
+    // Pop the loop condition if we jumped to the end
     compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
 }
 
@@ -370,8 +448,8 @@ fn for_(compiler: &mut Compiler) {
     compiler.consume(TOKEN_LEFT_PAREN, "Expect opening '(' at start of for loop");
 
     // Handle the initializer for(var i = 0;) for(i=0) for(;)
-    if !compiler.match_token(TOKEN_SEMICOLON) {
-        if compiler.match_token(TOKEN_VAR) {
+    if !compiler.match_advance(TOKEN_SEMICOLON) {
+        if compiler.match_advance(TOKEN_VAR) {
             var_declaration(compiler);
         } else {
             expr_stmt(compiler);
@@ -382,7 +460,7 @@ fn for_(compiler: &mut Compiler) {
     let mut loop_start_addr = compiler.chunk.count();
     let mut exit_jump = None; // OP_JUMP_NOT_EQUAL at the start of the loop
     let mut condition_start = None; // OP_LOOP to the condition if required (e.g. if there is an increment)
-    if !compiler.match_token(TOKEN_SEMICOLON) {
+    if !compiler.match_advance(TOKEN_SEMICOLON) {
         condition_start = Some(compiler.chunk.count());
         expression(compiler);
         exit_jump = Some(compiler.emit_jump(OP_JUMP_IF_FALSE));
@@ -390,7 +468,7 @@ fn for_(compiler: &mut Compiler) {
         compiler.consume(TOKEN_SEMICOLON, "Expect opening ';' after loop condition");
     } 
     
-    if !compiler.match_token(TOKEN_RIGHT_PAREN) {
+    if !compiler.match_advance(TOKEN_RIGHT_PAREN) {
         let condition_end_jump = compiler.emit_jump(OP_JUMP);
         loop_start_addr = compiler.chunk.count();
         expression(compiler);
@@ -413,20 +491,28 @@ fn for_(compiler: &mut Compiler) {
     compiler.end_scope();
 }
 
+// Every if statement is compiled with an implicit (potentially empty) else block. 
+// This makes the control flow simpler since every if / else is the same. 
 fn if_else_statement(compiler: &mut Compiler) {
     compiler.consume(TOKEN_LEFT_PAREN, "Expect opening '(' at start of if statement");
     expression(compiler);
     compiler.consume(TOKEN_RIGHT_PAREN, "Expect opening '(' at start of if statement");
-    let if_jump_location = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    // Jump to the else clause if the if statement is false
+    let if_jump = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    // Pop the conditional result that was just checked if we do not jump
     compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
+    // Compile the body to the if statement followed by jump over the else body
     statement(compiler);
-    let else_jump_location = compiler.emit_jump(OP_JUMP);
-    compiler.patch_jump(if_jump_location);
+    let else_jump = compiler.emit_jump(OP_JUMP);
+    // Patch the conditional if jump into the else statement and pop that condtion off the stack
+    compiler.patch_jump(if_jump);
     compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
-    if compiler.match_token(TOKEN_ELSE) {
+    // Actually compile an else body if there is an else
+    if compiler.match_advance(TOKEN_ELSE) {
         statement(compiler);
     }
-    compiler.patch_jump(else_jump_location);
+    // Patch the jump over the else statement 
+    compiler.patch_jump(else_jump);
 }
 
 fn block_stmt(compiler: &mut Compiler) {
@@ -468,6 +554,7 @@ fn grouping(compiler: &mut Compiler, _: bool) {
 fn binary(compiler: &mut Compiler) {
     let op = compiler.previous.kind;
     let op_line = compiler.previous.line_num;
+
     // We explicitly call this function based on the below operators being found.
     // Covering the _ case for exhausting but will never hit.
     let precedence = match op {
@@ -478,6 +565,21 @@ fn binary(compiler: &mut Compiler) {
         TOKEN_VAR => PREC_ASSIGNMENT,
         _ => PREC_NONE,
     };
+    
+    // Handle parsing up to the appropriate point. Pass in 1 higher precedence so that
+    // this handles left-associative trait of binary operators in rlox since parse_precedence
+    // will stop parsing when it hits the next * since we are now one above * in precedence.
+    // a = 3 * 4 * 2 == (3*4)*2
+    //-----^
+    //   prefix
+    //-------^
+    //     infix [MULT]
+    //---------^
+    //       prefix
+    //-----------^
+    //          infix [SUB]
+    //-------------^
+    //            prefix
     compiler.parse_precedence(Precedence::from_u8(precedence as u8 + 1));
     match op {
         TOKEN_PLUS => compiler.emit_byte(OP_ADD as u8, op_line),
@@ -494,6 +596,9 @@ fn binary(compiler: &mut Compiler) {
     }
 }
 
+// Works by checking the first condition -- if false short circuit (leaving false on the stack) 
+// and jump over the next condition. Otherwise, pop the true off the stack and compile the
+// next condition which will be true / false on its own and as the result of the &&
 fn and(compiler: &mut Compiler) {
     let short_circuit = compiler.emit_jump(OP_JUMP_IF_FALSE);
     compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
@@ -501,21 +606,30 @@ fn and(compiler: &mut Compiler) {
     compiler.patch_jump(short_circuit);
 }
 
+// Similar to and but short circuit logic is a bit flipped. Jump over if the first condition is
+// true, otherwise evaluate the second condition. 
 fn or(compiler: &mut Compiler) {
+    // If the first condition is false, we need to actually check the second condition. Jump over
+    // the short_circuit command and continue along. 
     let cont = compiler.emit_jump(OP_JUMP_IF_FALSE);
+    // In the or case, we short circuit when the first condition is true. So if we do not
+    // JUMP_IF_FALSE, then the first condition was true so we need to jump over the second. 
     let short_circuit = compiler.emit_jump(OP_JUMP);
+    // Jumping over the short circuit, pop the previous result. 
     compiler.patch_jump(cont);
     compiler.emit_byte(OP_POP as u8, compiler.current.line_num);
     compiler.parse_precedence(PREC_OR);
-
+    // Jump over the second condition
     compiler.patch_jump(short_circuit);
 }
 
 fn number(compiler: &mut Compiler, _: bool) {
+    // If we can parse the lexeme as an f64 without error then we're good to "cast" it into a
+    // Value::Number()
     match compiler.previous.lexeme.parse::<f64>() {
         Ok(constant_value) => {
             let const_idx = compiler.create_constant(Value::Number(constant_value));
-            compiler.emit_constant(const_idx);
+            compiler.emit_read_constant(const_idx);
         }
         Err(_) => {
             compiler.parse_error("Error parsing number");
@@ -548,6 +662,9 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
     let op_set;
     let op_get;
     let arg;
+    // Need to handle local and global separately. If we find a local variable defined with the
+    // previous lexeme name, use that. Otherwise default to global. The only difference is really
+    // how we get the argument to the GET / SET code (from local stack versus constant pool).
     match compiler.resolve_local(&compiler.previous) {
         Some(v) => {
             arg = v;
@@ -561,7 +678,7 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
             op_get = OP_GET_GLOBAL;
         }
     };
-    if can_assign && compiler.match_token(TOKEN_EQUAL) {
+    if can_assign && compiler.match_advance(TOKEN_EQUAL) {
             expression(compiler);
             compiler.emit_bytes(op_set as u8, arg as u8, compiler.previous.line_num);
             compiler.emit_byte(OP_POP as u8, compiler.previous.line_num);
@@ -572,9 +689,10 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
 
 fn string(compiler: &mut Compiler, _: bool) {
     let lexeme = &compiler.previous.lexeme;
+    // Trim the leading and trailing " from the lexeme
     let string = String::from(&lexeme[1..lexeme.len() - 1]);
     let const_idx = compiler.create_constant(Value::Str(string));
-    compiler.emit_constant(const_idx);
+    compiler.emit_read_constant(const_idx);
 }
 
 /*----------------------------------------------------------------------
@@ -654,20 +772,24 @@ impl ParseRules {
 // Entry point to compile source code.
 // 1. Scan the code and create a vector of Tokens
 // 2. Compile the tokens and emit bytecode onto the Chunk
-pub fn compile(source: &str, chunk: &mut Chunk) -> Result<()> {
+pub fn compile(source: &str, chunk: &mut Chunk) -> Result<(), CompilerError> {
+    // Generate a vector of tokens in reverse order so that compiler can use 
+    // standard pop commands to move through the Vec.
     let tokens = Scanner::new(source.trim()).scan();
     let mut compiler = Compiler::new(tokens, chunk);
+    // Start the compiler by advancing on the first token. 
     compiler.advance();
+    // Loop until we hit EOF, creating declarations. 
     while compiler.current.kind != TOKEN_EOF {
         declaration(&mut compiler);
     }
     compiler.emit_byte(OP_RETURN as u8, compiler.current.line_num);
-    if crate::DEBUG {
+    if crate::debug() {
         disassemble_chunk(compiler.chunk, "Compiling Complete");
     }
 
     if compiler.had_error {
-        Err(Box::new(CompilerError()))
+        Err(CompilerError())
     } else {
         Ok(())
     }

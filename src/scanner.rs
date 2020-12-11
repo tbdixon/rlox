@@ -3,7 +3,6 @@ use itertools::structs::MultiPeek;
 use std::iter::Enumerate;
 use std::str::Chars;
 
-type SourceEnumItem = (usize, char);
 const EOF_CHAR: char = '\0';
 const EOF_IDX: usize = usize::MAX;
 const EOF_MARKER: SourceEnumItem = (EOF_IDX, EOF_CHAR);
@@ -15,21 +14,13 @@ pub struct Scanner<'a> {
     line_num: i32,
 }
 
-trait CharExt {
-    fn is_lox_alpha(&self) -> bool;
-}
-
-impl CharExt for char {
-    fn is_lox_alpha(&self) -> bool {
-        self.is_ascii_alphabetic() || *self == '_'
-    }
-}
-
+// Basic type wrapper and helper functions to get at the index and raw characters while iterating
+// through the source code. 
+type SourceEnumItem = (usize, char);
 trait TupleExt {
     fn ch(&self) -> char;
     fn idx(&self) -> usize;
 }
-
 impl TupleExt for SourceEnumItem {
     fn ch(&self) -> char {
         self.1
@@ -40,14 +31,31 @@ impl TupleExt for SourceEnumItem {
     }
 }
 
+// Small helper so that you can call 'a'.is_lox_alpha() on a native char type
+trait CharExt {
+    fn is_lox_alpha(&self) -> bool;
+}
+impl CharExt for char {
+    fn is_lox_alpha(&self) -> bool {
+        self.is_ascii_alphabetic() || *self == '_'
+    }
+}
+
+// Implementing an extension on MultiPeek for easier iteration through the source code. Standard
+// peek can only look ahead a single character, scanning requires slightly more look ahead. 
 trait MultiPeekExt {
+    // Peek n ahead in the iterator
     fn peek_nth(&mut self, n: usize) -> Option<SourceEnumItem>;
+    // Peek at the next item in iterator
     fn peek_next(&mut self) -> Option<SourceEnumItem>;
+    // Peek 2 ahead in iterator -- wraps up nth but used frequently enough to create a function
     fn peek_two(&mut self) -> Option<SourceEnumItem>;
 }
 
 impl<I: Iterator<Item = SourceEnumItem>> MultiPeekExt for MultiPeek<I> {
     fn peek_nth(&mut self, n: usize) -> Option<SourceEnumItem> {
+        // MultiPeek keeps a separate stack / pointer, to iterate through loop up to the nth spot
+        // then return a copy of that element and reset the peek pointer. 
         let mut nth = self.peek();
         for _ in 0..n {
             nth = self.peek();
