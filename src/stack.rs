@@ -5,7 +5,10 @@ use std::ops::Index;
 // Build our own stack so that we can use a small stack allocated bit of space
 // rather than a Vec which will continually be allocating around the heap
 // given this is the core element of our VM worth having much faster.
-const MAX_STACK_SIZE: usize = 256;
+// 
+// The problem is that array need a fixed size at compile time, so need to determine how to
+// generalize this slightly (to handle call stacks and frame stacks) within that constraint.
+const MAX_STACK_SIZE: usize = 1024;
 #[derive(Debug)]
 pub struct Stack<T: std::fmt::Debug + std::cmp::PartialEq + std::clone::Clone> {
     top: usize,
@@ -42,13 +45,26 @@ impl<T: std::fmt::Debug + std::cmp::PartialEq + std::clone::Clone> Stack<T> {
         }
     }
 
-    pub fn peek(&self) -> Option<T> {
+    // Returns a reference to the current end of the stack; no updates.
+    //
+    // Since the stack is initialized to all None and we mem repalce anything 
+    // with None on pop, stack[0] can be used as a reference to None.
+    pub fn peek(&self) -> Option<&T> {
+        let mut idx = 0;
         if self.top > 0 {
-            self.stack[self.top - 1].clone()
-        } else {
-            None
+            idx = self.top - 1;
         }
+        self.stack[idx].as_ref()
     }
+
+    pub fn peek_mut(&mut self) -> Option<&mut T> {
+        let mut idx = 0;
+        if self.top > 0 {
+            idx = self.top - 1;
+        }
+        self.stack[idx].as_mut()
+    }
+
 
     pub fn push(&mut self, v: T) -> usize {
         self.stack[self.top] = Some(v);

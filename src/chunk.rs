@@ -1,4 +1,4 @@
-use std::fmt;
+use crate::value::*;
 use strum_macros::EnumIter;
 
 // Type checking makes it trickier to switch between consider an
@@ -63,7 +63,7 @@ impl From<OpCode> for u8 {
             OP_JUMP => 0x15,
             OP_JUMP_IF_FALSE => 0x16,
             OP_LOOP => 0x17,
-             _ => 0xFF,
+            _ => 0xFF,
         }
     }
 }
@@ -100,28 +100,9 @@ impl From<u8> for OpCode {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Value {
-    Bool(bool),
-    Nil(),
-    Number(f64),
-    Str(String),
-}
-
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Value::Bool(b) => write!(f, "{}", b),
-            Value::Nil() => write!(f, "nil"),
-            Value::Number(n) => write!(f, "{}", n),
-            Value::Str(s) => write!(f, "{}", s),
-        }
-    }
-}
-
 type ConstantPool = Vec<Value>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Chunk {
     pub code: Vec<u8>,
     pub lines: Vec<i32>,
@@ -140,7 +121,7 @@ impl Chunk {
     pub fn count(&self) -> usize {
         self.code.len()
     }
-    
+
     pub fn write(&mut self, byte: u8, line: i32) {
         self.code.push(byte);
         self.lines.push(line);
@@ -158,7 +139,7 @@ impl Chunk {
     pub fn find_constant(&self, value: &Value) -> Option<usize> {
         for (idx, constant) in self.constant_pool.iter().enumerate() {
             if constant == value {
-                return Some(idx)
+                return Some(idx);
             }
         }
         None

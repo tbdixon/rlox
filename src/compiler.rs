@@ -1,5 +1,6 @@
 use crate::chunk::OpCode::{self, *};
-use crate::chunk::{Chunk, Value, };
+use crate::value::{Value, LoxFn};
+use crate::chunk::{Chunk};
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
 use crate::debug::disassemble_chunk;
@@ -65,18 +66,23 @@ impl  std::cmp::PartialEq for Local {
     }
 }
 
-struct Compiler<'a> {
+struct Compiler {
+    // Tokens from the scanning phase
     tokens: Vec<Token>,
-    chunk: &'a mut Chunk,
-/*-----Parser-----------*/
+    // Parsing variables
     previous: Token,
     current: Token,
     had_error: bool,
     panic_mode: bool,
     parse_rules: ParseRules,
-/*-----Variables---------*/
-    locals: Stack<Local>,
-    scope_depth: u8,
+    // Compiler is always in a function. At the top level this is the script itself. 
+    // These functions are represented as a stack, along with the locals and scope depth 
+    // within each function. Starting a new function pushes a new stack of locals and 
+    // scope depths, popping the function off (completing compiling) pops the parallel 
+    // locals and scope depths. 
+    functions: Vec<LoxFn>, 
+    locals: Vec<Stack<Local>>,
+    scope_depths: Vec<u8>,
 }
 
 fn create_jump_offset(jump_offset: usize) -> (u8,u8) {
@@ -86,19 +92,56 @@ fn create_jump_offset(jump_offset: usize) -> (u8,u8) {
         (high_bits, low_bits)
 }
  
-impl Compiler<'_> {
-    pub fn new(tokens: Vec<Token>, chunk: &mut Chunk) -> Compiler {
+impl Compiler {
+    pub fn new(tokens: Vec<Token>) -> Compiler {
+        let mut locals = Stack::new();
+        locals.push( Local{ name: "".to_string(), depth: 0 } );
         Compiler {
             tokens,
-            chunk,
+            functions: vec![LoxFn::new()],
+            locals: vec![locals],
+            scope_depths: vec![0],
             parse_rules: ParseRules::new(),
             previous: Token::empty(),
             current: Token::empty(),
             had_error: false,
             panic_mode: false,
-            locals: Stack::new(),
-            scope_depth: 0,
-        }
+       }
+    }
+
+    // A few functions to handle the indirection through the the current function 
+    // and stacks of variable information.
+    fn chunk(&mut self) -> &mut Chunk {
+        &mut self.functions.last_mut().unwrap().chunk
+    }
+
+    fn increment_depth(&mut self) {
+        *self.scope_depths.last_mut().unwrap() += 1;
+    }
+
+
+    fn decrement_depth(&mut self) {
+        *self.scope_depths.last_mut().unwrap() -= 1;
+    }
+
+    fn depth(&self) -> u8 {
+        *self.scope_depths.last().unwrap()
+    }
+
+    fn push_local(&mut self, local: Local) -> usize {
+        self.locals.last_mut().unwrap().push(local)
+    }
+
+    fn find_local(&self, needle: Local) -> Option<usize> {
+        self.locals.last().unwrap().find(needle)
+    }
+
+    fn peek_local(&self) -> Option<&Local> {
+        self.locals.last().unwrap().peek()
+    }
+
+    fn pop_local(&mut self) -> Local {
+        self.locals.last_mut().unwrap().pop().unwrap()
     }
 
     //TODO: This does not appropriately handle shadowed variables like below
@@ -106,36 +149,36 @@ impl Compiler<'_> {
     //  var a = a;
     // }
     fn add_local(&mut self, name: String) -> usize {
-        let local = Local { name, depth: self.scope_depth };
-        self.locals.push(local)
+        let local = Local { name, depth: self.depth() };
+        self.push_local(local)
     }
 
     // Looks for and returns the index of a local variable by name starting in current
-    // depth / scope and woring backwards. None if not found. 
+    // depth / scope and working backwards. None if not found. 
     fn resolve_local(&self, token: &Token) -> Option<usize> {
         let variable_name = String::from(&token.lexeme);
-        let local = Local { name: variable_name, depth: self.scope_depth };
-        self.locals.find(local) 
+        let local = Local { name: variable_name, depth: self.depth() };
+        self.find_local(local)
     }
 
     fn begin_scope(&mut self) {
-        self.scope_depth += 1;
+        self.increment_depth();
     }
 
     // At the end of a scope we need to pop the locals off the stack
     fn end_scope(&mut self) {
-        let mut current = self.locals.peek();
+        let mut current = self.peek_local();
         while let Some(local) = current {
-            if local.depth == self.scope_depth {
-                self.locals.pop().unwrap();
+            if local.depth == self.depth() {
+                self.pop_local();
                 self.emit_byte(OP_POP as u8, self.previous.line_num);
-                current = self.locals.peek();
+                current = self.peek_local();
             }
             else {
                 current = None
             }
         }
-        self.scope_depth -= 1;
+        self.decrement_depth();
     }
      
     // Emit errors and set the flags to ensure a program with compiler 
@@ -204,15 +247,15 @@ impl Compiler<'_> {
         self.current.kind == expected
     }
     
-    // Functions to handle "emitting" values which writes them to the chunk
-    // being borrowed by the compiler.
+    // Functions to handle "emitting" values which writes them to the 
+    // chunk associated with the current function being compiled. 
     fn emit_byte(&mut self, byte: u8, line: i32) {
-        self.chunk.write(byte, line);
+        self.chunk().write(byte, line);
     }
 
     fn emit_bytes(&mut self, b1: u8, b2: u8, line: i32) {
-        self.chunk.write(b1, line);
-        self.chunk.write(b2, line);
+        self.chunk().write(b1, line);
+        self.chunk().write(b2, line);
     }
     
     // Emits bytecode to read a constant at const_idx onto the VM stack
@@ -233,7 +276,7 @@ impl Compiler<'_> {
         self.emit_byte(op as u8, self.current.line_num);
         self.emit_byte(OP_UNKNOWN as u8, self.current.line_num);
         self.emit_byte(OP_UNKNOWN as u8, self.current.line_num);
-        self.chunk.count() - 2
+        self.chunk().count() - 2
     }
 
     // Per emit_jump this is the patching logic that replaces the UNKNOWN
@@ -241,12 +284,12 @@ impl Compiler<'_> {
     //
     // Input is the address the patch (see emit_jump) and this is patched to jump
     // to the current memory location. That location is determined by the
-    // chunk.count() [Total Instructions] - [Patch Addr] - 2. -2 is due to the 
+    // chunk().count() [Total Instructions] - [Patch Addr] - 2. -2 is due to the 
     // actual VM moving the IP forward by 2 when reading the jump offset. 
     fn patch_jump(&mut self, addr: usize) {
-        let (high_bits, low_bits) = create_jump_offset(self.chunk.count() - addr - 2);
-        self.chunk.update(addr, high_bits);
-        self.chunk.update(addr + 1, low_bits);
+        let (high_bits, low_bits) = create_jump_offset(self.chunk().count() - addr - 2);
+        self.chunk().update(addr, high_bits);
+        self.chunk().update(addr + 1, low_bits);
     }
 
     // Loops don't need to be patched, so single step takes in an address that represents the start
@@ -255,7 +298,7 @@ impl Compiler<'_> {
     // The offset has 3 added to it to make up for the IP moving forward in the VM by 3 when
     // actually reading the jump instruction + offset bytes. 
     fn emit_loop(&mut self, addr: usize) {
-        let (high_bits, low_bits) = create_jump_offset(self.chunk.count() - addr + 3);
+        let (high_bits, low_bits) = create_jump_offset(self.chunk().count() - addr + 3);
         self.emit_byte(OP_LOOP as u8, self.current.line_num);
         self.emit_byte(high_bits as u8, self.current.line_num);
         self.emit_byte(low_bits as u8, self.current.line_num);
@@ -265,9 +308,9 @@ impl Compiler<'_> {
     // Creates a constant by putting it into the constant_pool on the code Chunk. If that constant
     // already exists in there just return the index into that. 
     fn create_constant(&mut self, value: Value) -> usize {
-        match self.chunk.find_constant(&value) {
+        match self.chunk().find_constant(&value) {
             Some(const_idx) => const_idx,
-            _ => self.chunk.add_constant(value)
+            _ => self.chunk().add_constant(value)
         }
     }
 
@@ -373,7 +416,7 @@ fn var_declaration(compiler: &mut Compiler) {
     }
 
     // Define / Set the initial value of the variable 
-    if compiler.scope_depth == 0 {
+    if compiler.depth() == 0 {
         compiler.emit_byte(OP_DEFINE_GLOBAL as u8, compiler.previous.line_num);
     } else {
         compiler.emit_bytes(OP_SET_LOCAL as u8, var_idx as u8, compiler.previous.line_num);
@@ -387,7 +430,7 @@ fn var_declaration(compiler: &mut Compiler) {
 fn parse_variable(compiler: &mut Compiler) -> usize {
     compiler.consume(TOKEN_IDENTIFIER, "Expect variable name");
     let variable_name = String::from(&compiler.previous.lexeme);
-    if compiler.scope_depth == 0 {
+    if compiler.depth() == 0 {
         let const_idx = compiler.create_constant(Value::Str(variable_name));
         compiler.emit_read_constant(const_idx);
         const_idx
@@ -424,7 +467,7 @@ fn statement(compiler: &mut Compiler) {
 fn while_(compiler: &mut Compiler) {
     // Save the current address to use later when emitting the loop instruction at the
     // end of the while loop.
-    let loop_start_addr = compiler.chunk.count();
+    let loop_start_addr = compiler.chunk().count();
     compiler.consume(TOKEN_LEFT_PAREN, "Expect opening '(' at start of while loop");
     // Compile the loop condition (which will leave it at the top of the stack)
     expression(compiler);
@@ -457,11 +500,11 @@ fn for_(compiler: &mut Compiler) {
     }
     
     // Condition check
-    let mut loop_start_addr = compiler.chunk.count();
+    let mut loop_start_addr = compiler.chunk().count();
     let mut exit_jump = None; // OP_JUMP_NOT_EQUAL at the start of the loop
     let mut condition_start = None; // OP_LOOP to the condition if required (e.g. if there is an increment)
     if !compiler.match_advance(TOKEN_SEMICOLON) {
-        condition_start = Some(compiler.chunk.count());
+        condition_start = Some(compiler.chunk().count());
         expression(compiler);
         exit_jump = Some(compiler.emit_jump(OP_JUMP_IF_FALSE));
         compiler.emit_byte(OP_POP as u8,compiler.current.line_num);
@@ -470,7 +513,7 @@ fn for_(compiler: &mut Compiler) {
     
     if !compiler.match_advance(TOKEN_RIGHT_PAREN) {
         let condition_end_jump = compiler.emit_jump(OP_JUMP);
-        loop_start_addr = compiler.chunk.count();
+        loop_start_addr = compiler.chunk().count();
         expression(compiler);
         compiler.consume(TOKEN_RIGHT_PAREN, "Expect closing ')' at end of for loop");
         if let Some(addr) = condition_start {
@@ -772,11 +815,11 @@ impl ParseRules {
 // Entry point to compile source code.
 // 1. Scan the code and create a vector of Tokens
 // 2. Compile the tokens and emit bytecode onto the Chunk
-pub fn compile(source: &str, chunk: &mut Chunk) -> Result<(), CompilerError> {
+pub fn compile(source: &str) -> Result<LoxFn, CompilerError> {
     // Generate a vector of tokens in reverse order so that compiler can use 
     // standard pop commands to move through the Vec.
     let tokens = Scanner::new(source.trim()).scan();
-    let mut compiler = Compiler::new(tokens, chunk);
+    let mut compiler = Compiler::new(tokens);
     // Start the compiler by advancing on the first token. 
     compiler.advance();
     // Loop until we hit EOF, creating declarations. 
@@ -785,13 +828,13 @@ pub fn compile(source: &str, chunk: &mut Chunk) -> Result<(), CompilerError> {
     }
     compiler.emit_byte(OP_RETURN as u8, compiler.current.line_num);
     if crate::debug() {
-        disassemble_chunk(compiler.chunk, "Compiling Complete");
+        disassemble_chunk(compiler.chunk(), "Compiling Complete");
     }
 
     if compiler.had_error {
         Err(CompilerError())
     } else {
-        Ok(())
+        compiler.functions.pop().ok_or_else(|| CompilerError())
     }
 }
 
@@ -802,8 +845,7 @@ mod tests {
     #[test]
     fn basic_test() {
         let source = "-(5+(15-3)/4*2);";
-        let mut chunk = Chunk::new();
-        compile(source, &mut chunk).unwrap();
+        let chunk = compile(source).unwrap();
         let res = Chunk {
             code: vec![1, 0, 1, 1, 1, 2, 4, 1, 3, 6, 1, 4, 5, 3, 2, 14, 0],
             lines: vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],

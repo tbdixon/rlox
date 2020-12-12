@@ -1,5 +1,6 @@
 use crate::chunk::OpCode::{self, *};
-use crate::chunk::{Chunk, Value};
+use crate::chunk::{Chunk};
+use crate::value::{Value, LoxFn};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
@@ -34,14 +35,21 @@ impl From<crate::compiler::CompilerError> for InterpretResult {
         INTERPRET_COMPILE_ERROR
     }
 }
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct CallFrame {
+    function: LoxFn,
+    slot: usize,
+    ip: usize,
+}
+
 // A stack-based VM. IP points into the current executing instruction. Every expression should have
 // a net stack effect of 1 (leaving the result on top of the stack) and every statement should have no
 // net stack effect (leaving stack same as before).
 pub struct VM {
-    pub chunk: Chunk,
-    pub ip: usize,
-    pub stack: Stack<Value>,
-    pub globals: HashMap<String, Value>,
+    frames: Stack<CallFrame>,
+    stack: Stack<Value>,
+    globals: HashMap<String, Value>,
 }
 
 // Two functions to use as pointers for comparisions to avoid some duplication later.
@@ -56,21 +64,53 @@ use crate::vm::InterpretResult::*;
 impl VM {
     pub fn new() -> VM {
         VM {
-            chunk: Chunk::new(),
+            frames: Stack::new(),
             stack: Stack::new(),
             globals: HashMap::new(),
-            ip: 0,
         }
+    }
+
+    fn ip(&self) -> usize {
+        self.frames.peek().unwrap().ip
+    }
+
+    fn frame(&mut self) -> &mut CallFrame {
+        self.frames.peek_mut().unwrap()
+    }
+
+    fn increment_ip(&mut self) {
+        self.frames.peek_mut().unwrap().ip += 1;
+    }
+    
+    fn chunk(&self) -> &Chunk {
+        &self.frames.peek().unwrap().function.chunk
+    }
+
+    fn add_ip(&mut self, offset: usize) {
+        self.frames.peek_mut().unwrap().ip += offset;
+    }
+
+    fn sub_ip(&mut self, offset: usize) {
+        self.frames.peek_mut().unwrap().ip -= offset;
+    }
+   
+    fn get_constant(&self, constant_addr: usize) -> Value {
+        self.chunk().constant_pool[constant_addr].clone()
+    }
+
+    fn frame_slot(&self) -> usize {
+        self.frames.peek().unwrap().slot
     }
 
     // When running in REPL mode, we want a clean code chunk and stack. Globals are persistent
     // across each line though, so you can do
     // var a = 5; <ENTER>
     // print(a); <ENTER>
-    pub fn reset_repl(&mut self) {
-        self.chunk = Chunk::new();
-        self.stack = Stack::new();
-        self.ip = 0;
+    pub fn reset_repl(&mut self) -> Result<()> {
+//        self.frame().function.chunk = Chunk::new();
+//        self.stack = Stack::new();
+//        self.frame().ip = 0;
+        Ok(())
     }
 
     fn print_globals(&self) {
@@ -80,9 +120,10 @@ impl VM {
     }
 
     // Reads the next byte and moves the instruction pointer.
-    fn read_byte(&mut self) -> u8 {
-        self.ip += 1;
-        self.chunk.code[self.ip - 1]
+    fn read_byte(&mut self) -> Result<u8> {
+        self.increment_ip();
+        let ip = self.ip();
+        Ok(self.frame().function.chunk.code[ip])
     }
 
     // Very duplicated code, but as of yet I can't figure out a way to pass in a generic
@@ -163,8 +204,8 @@ impl VM {
     }
 
     fn get_variable_name(&mut self) -> Result<String> {
-        let constant_addr: usize = self.read_byte() as usize;
-        let constant = &self.chunk.constant_pool[constant_addr];
+        let constant_addr: usize = self.read_byte()? as usize;
+        let constant = &self.frame().function.chunk.constant_pool[constant_addr];
         match constant {
             Value::Str(v) => Ok(v.clone()),
             _ => Err(INTERPRET_RUNTIME_ERROR("Variable name must be a Str")),
@@ -199,7 +240,7 @@ impl VM {
             .peek()
             .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Invalid assigment"))?;
         if self.globals.contains_key(&var_name) {
-            self.globals.insert(var_name, val);
+            self.globals.insert(var_name, val.clone());
             Ok(INTERPRET_OK)
         } else {
             Err(INTERPRET_RUNTIME_ERROR("Variable not definied"))
@@ -208,20 +249,17 @@ impl VM {
 
     // Pulls the two bytes that make up the 16 bit jump offset and return this
     // offset (to be used to increment / decrement the instruction pointer).
-    fn get_jump_offset(&mut self) -> usize {
-        let high_bits = self.read_byte() as u16;
-        let low_bits = self.read_byte() as u16;
-        ((high_bits << 8) | low_bits) as usize
+    fn get_jump_offset(&mut self) -> Result<usize> {
+        let high_bits = self.read_byte()? as u16;
+        let low_bits = self.read_byte()? as u16;
+        Ok(((high_bits << 8) | low_bits) as usize)
     }
 
     // Definition of 'false' in rlox world
     fn is_falsey(&self) -> Result<bool> {
-        match self
-            .stack
-            .peek()
-            .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Missing expression for false"))?
-        {
-            Value::Bool(b) if !b => Ok(true),
+        let val = self.stack.peek().unwrap();
+        match val {
+           Value::Bool(b) if !b => Ok(true),
             Value::Nil() => Ok(true),
             _ => Ok(false),
         }
@@ -229,7 +267,9 @@ impl VM {
 
     // Main entry point into the VM -- compile and run.
     pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
-        compile(source, &mut self.chunk)?;
+        let function = compile(source)?;
+        let frame = CallFrame { function, slot: 1, ip: 0 };
+        self.frames.push(frame);
         self.run()?;
         Ok(INTERPRET_OK)
     }
@@ -241,9 +281,9 @@ impl VM {
                 println!("-----------------------------------------------------------------");
                 self.stack.print_stack();
                 self.print_globals();
-                disassemble_instruction(&self.chunk, self.ip);
+                disassemble_instruction(self.chunk(), self.ip());
             }
-            let instruction = self.read_byte();
+            let instruction = self.read_byte()?;
             match OpCode::from(instruction) {
                 OP_RETURN => {
                     return Ok(INTERPRET_OK);
@@ -253,8 +293,8 @@ impl VM {
                     Ok(INTERPRET_OK)
                 }
                 OP_CONSTANT => {
-                    let constant_addr: usize = self.read_byte() as usize;
-                    let constant = self.chunk.constant_pool[constant_addr].clone();
+                    let constant_addr: usize = self.read_byte()? as usize;
+                    let constant = self.get_constant(constant_addr); 
                     self.stack.push(constant);
                     Ok(INTERPRET_OK)
                 }
@@ -277,8 +317,8 @@ impl VM {
                 OP_GET_LOCAL => {
                     // Getting a local simply entails reading it from local section (front)
                     // of stack and then pushing that onto the stack.
-                    let local_index: usize = self.read_byte() as usize;
-                    let val = self.stack.get(local_index)?.clone();
+                    let local_index: usize = self.read_byte()? as usize;
+                    let val = self.stack.get(self.frame_slot() + local_index)?.clone();
                     self.stack.push(val);
                     Ok(INTERPRET_OK)
                 }
@@ -286,9 +326,9 @@ impl VM {
                     // Setting a local updates the local section with what is on top of the
                     // stack but *leaves* that on the stack since assignment is an expression
                     // in Lox.
-                    let local_index: usize = self.read_byte() as usize;
+                    let local_index: usize = self.read_byte()? as usize;
                     if let Some(new_val) = self.stack.peek() {
-                        self.stack.update(local_index, new_val);
+                        self.stack.update(self.frame_slot() + local_index, new_val.clone());
                         Ok(INTERPRET_OK)
                     } else {
                         Err(INTERPRET_RUNTIME_ERROR("No value on stack to assign"))
@@ -296,20 +336,20 @@ impl VM {
                 }
                 // Control flow is all similar--grab the jump offset and move the ip based on that.
                 OP_JUMP_IF_FALSE => {
-                    let offset = self.get_jump_offset();
+                    let offset = self.get_jump_offset()?;
                     if self.is_falsey()? {
-                        self.ip += offset;
+                        self.add_ip(offset);
                     }
                     Ok(INTERPRET_OK)
                 }
                 OP_JUMP => {
-                    let offset = self.get_jump_offset();
-                    self.ip += offset;
+                    let offset = self.get_jump_offset()?;
+                    self.add_ip(offset);
                     Ok(INTERPRET_OK)
                 }
                 OP_LOOP => {
-                    let offset = self.get_jump_offset();
-                    self.ip -= offset;
+                    let offset = self.get_jump_offset()?;
+                    self.sub_ip(offset);
                     Ok(INTERPRET_OK)
                 }
                 OP_UNKNOWN => Err(INTERPRET_COMPILE_ERROR),
