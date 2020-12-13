@@ -94,12 +94,10 @@ fn create_jump_offset(jump_offset: usize) -> (u8,u8) {
  
 impl Compiler {
     pub fn new(tokens: Vec<Token>) -> Compiler {
-        let mut locals = Stack::new();
-        locals.push( Local{ name: "".to_string(), depth: 0 } );
         Compiler {
             tokens,
             functions: vec![LoxFn::new()],
-            locals: vec![locals],
+            locals: vec![Stack::new()],
             scope_depths: vec![0],
             parse_rules: ParseRules::new(),
             previous: Token::empty(),
@@ -109,8 +107,11 @@ impl Compiler {
        }
     }
 
-    // A few functions to handle the indirection through the the current function 
-    // and stacks of variable information.
+    // A number of functions that help with the indirection around a vectors and stacks for
+    // consistent handling of Option / Results and add granularity with mutable and immutable borrows
+    // going into the functions as required. 
+    //
+    // TODO: replace unwrap with ok_or_else or something similar
     fn chunk(&mut self) -> &mut Chunk {
         &mut self.functions.last_mut().unwrap().chunk
     }
@@ -118,7 +119,6 @@ impl Compiler {
     fn increment_depth(&mut self) {
         *self.scope_depths.last_mut().unwrap() += 1;
     }
-
 
     fn decrement_depth(&mut self) {
         *self.scope_depths.last_mut().unwrap() -= 1;

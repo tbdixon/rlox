@@ -24,7 +24,10 @@ fn main() -> Result<()> {
             let script =
                 fs::read_to_string(&args[1]).expect(&format!("Unable to read script {}", args[1]));
             let mut vm = VM::new();
-            vm.interpret(&script)?;
+            match vm.interpret(&script) {
+                Ok(_) => Ok(()),
+                Err(e) => { println!("{:?}", e); Err(e) }
+            }?
         }
         _ => {
             panic!("Invalid arguments received: {:?}", args);
