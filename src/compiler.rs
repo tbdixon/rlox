@@ -94,10 +94,12 @@ fn create_jump_offset(jump_offset: usize) -> (u8,u8) {
  
 impl Compiler {
     pub fn new(tokens: Vec<Token>) -> Compiler {
+        let mut locals = Stack::new();
+        locals.push(Local{ name: String::from(""), depth: 0 });
         Compiler {
             tokens,
             functions: vec![LoxFn::new()],
-            locals: vec![Stack::new()],
+            locals: vec![locals],
             scope_depths: vec![0],
             parse_rules: ParseRules::new(),
             previous: Token::empty(),
@@ -107,11 +109,34 @@ impl Compiler {
        }
     }
 
+    fn start_function(&mut self) {
+        let mut function = LoxFn::new();
+        let mut locals = Stack::new();
+
+        let name = String::from(&self.previous.lexeme);
+        locals.push(Local{ name: name.clone(), depth: 0 });
+
+        function.name = Some(name);
+        self.functions.push(function);
+        self.locals.push(Stack::new());
+        self.scope_depths.push(0);
+    }
+
+    fn end_function(&mut self) -> LoxFn {
+        self.scope_depths.pop();
+        self.locals.pop();
+        self.functions.pop().unwrap()
+    }
+
     // A number of functions that help with the indirection around a vectors and stacks for
     // consistent handling of Option / Results and add granularity with mutable and immutable borrows
     // going into the functions as required. 
     //
     // TODO: replace unwrap with ok_or_else or something similar
+    fn increment_arity(&mut self) {
+        self.functions.last_mut().unwrap().arity += 1;
+    }
+    
     fn chunk(&mut self) -> &mut Chunk {
         &mut self.functions.last_mut().unwrap().chunk
     }
@@ -257,7 +282,13 @@ impl Compiler {
         self.chunk().write(b1, line);
         self.chunk().write(b2, line);
     }
-    
+
+    fn emit_return(&mut self) {
+        let line = self.previous.line_num;
+        self.emit_byte(OP_NIL as u8, line);
+        self.emit_byte(OP_RETURN as u8, line);
+    }
+   
     // Emits bytecode to read a constant at const_idx onto the VM stack
     fn emit_read_constant(&mut self, const_idx: usize) {
        self.emit_bytes(OP_CONSTANT as u8, const_idx as u8, self.previous.line_num);
@@ -391,6 +422,8 @@ impl Compiler {
 fn declaration(compiler: &mut Compiler) {
     if compiler.match_advance(TOKEN_VAR) {
         var_declaration(compiler);
+    } else if compiler.match_advance(TOKEN_FUN) {
+        fun_declaration(compiler);
     } else {
         statement(compiler);
     }
@@ -399,6 +432,16 @@ fn declaration(compiler: &mut Compiler) {
     // so we grab any additional errors. 
     if compiler.panic_mode {
         compiler.synchronize();
+    }
+}
+
+fn fun_declaration(compiler: &mut Compiler) {
+    let var_idx = parse_variable(compiler);
+    function(compiler);
+    if compiler.depth() == 0 {
+        compiler.emit_byte(OP_DEFINE_GLOBAL as u8, compiler.previous.line_num);
+    } else {
+        compiler.emit_bytes(OP_SET_LOCAL as u8, var_idx as u8, compiler.previous.line_num);
     }
 }
 
@@ -444,6 +487,8 @@ fn parse_variable(compiler: &mut Compiler) -> usize {
 fn statement(compiler: &mut Compiler) {
     if compiler.match_advance(TOKEN_PRINT) {
         print_stmt(compiler);
+    } else if compiler.match_advance(TOKEN_RETURN) {
+        return_statement(compiler);
     } else if compiler.match_advance(TOKEN_IF) {
         if_else_statement(compiler);
     } else if compiler.match_advance(TOKEN_WHILE) {
@@ -579,6 +624,43 @@ fn print_stmt(compiler: &mut Compiler) {
     expression(compiler);
     compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
     compiler.emit_byte(OP_PRINT as u8, line_num);
+}
+
+fn return_statement(compiler: &mut Compiler) {
+    if compiler.match_advance(TOKEN_SEMICOLON) {
+        compiler.emit_return();
+    }
+    else {
+        expression(compiler);
+        compiler.consume(TOKEN_SEMICOLON, "Expect ';' following return statement");
+        compiler.emit_byte(OP_RETURN as u8, compiler.previous.line_num);
+    }
+}
+
+fn function(compiler: &mut Compiler) {
+    compiler.start_function();
+    compiler.begin_scope(); 
+    
+    compiler.consume(TOKEN_LEFT_PAREN, "Expect '(' at start of function");
+    if !compiler.match_advance(TOKEN_RIGHT_PAREN) {
+        compiler.increment_arity();
+        parse_variable(compiler);
+        while compiler.match_advance(TOKEN_COMMA) {
+            compiler.increment_arity();
+            parse_variable(compiler);
+        }
+        compiler.consume(TOKEN_RIGHT_PAREN, "Expect ')' at end of function");
+    }
+
+    compiler.consume(TOKEN_LEFT_BRACE, "Expect '{' before function body");
+    block_stmt(compiler);
+    compiler.emit_return();
+    let function = compiler.end_function();
+    if crate::debug() {
+        disassemble_chunk(&function.chunk, &format!("Compiling {} complete", function));
+    }
+    let function_idx = compiler.create_constant(Value::Function(function));
+    compiler.emit_read_constant(function_idx);
 }
 
 fn expression(compiler: &mut Compiler) {
@@ -730,6 +812,28 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
     }
 }
 
+// Entry into a function call
+fn call(compiler: &mut Compiler) {
+    let arg_count = parse_args(compiler);
+    compiler.emit_bytes(OP_CALL as u8, arg_count, compiler.previous.line_num);
+}
+
+// Puts the arguments for a function call at the top of the stack by calling through to expression
+// for the number of args. 
+fn parse_args(compiler: &mut Compiler) -> u8 {
+    let mut arg_count = 0;
+    if !compiler.match_advance(TOKEN_RIGHT_PAREN) {
+        expression(compiler);
+        arg_count += 1;
+        while compiler.match_advance(TOKEN_COMMA) {
+            expression(compiler);
+            arg_count += 1;
+        }
+        compiler.consume(TOKEN_RIGHT_PAREN, "Expect ')' at end of function call");
+    };
+    arg_count
+}
+
 fn string(compiler: &mut Compiler, _: bool) {
     let lexeme = &compiler.previous.lexeme;
     // Trim the leading and trailing " from the lexeme
@@ -756,7 +860,7 @@ impl ParseRules {
         let mut rules = ParseRules(HashMap::new());
         rules.0.insert(TOKEN_EOF,           ParseRule {precedence: PREC_NONE,       prefix: None,            infix: None});
         rules.0.insert(TOKEN_NUMBER,        ParseRule {precedence: PREC_NONE,       prefix: Some(&number),   infix: None});
-        rules.0.insert(TOKEN_LEFT_PAREN,    ParseRule {precedence: PREC_NONE,       prefix: Some(&grouping), infix: None});
+        rules.0.insert(TOKEN_LEFT_PAREN,    ParseRule {precedence: PREC_CALL,       prefix: Some(&grouping), infix: Some(&call)});
         rules.0.insert(TOKEN_STRING,        ParseRule {precedence: PREC_NONE,       prefix: Some(&string),  infix: None});
         rules.0.insert(TOKEN_EQUAL,         ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
         rules.0.insert(TOKEN_VAR,           ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
@@ -767,6 +871,7 @@ impl ParseRules {
         rules.0.insert(TOKEN_NIL,           ParseRule {precedence: PREC_NONE,       prefix: Some(&literal), infix: None});
         rules.0.insert(TOKEN_RIGHT_PAREN,   ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
         rules.0.insert(TOKEN_SEMICOLON,     ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
+        rules.0.insert(TOKEN_COMMA,         ParseRule {precedence: PREC_NONE,       prefix: None,           infix: None});
         rules.0.insert(TOKEN_MINUS,         ParseRule {precedence: PREC_TERM,       prefix: Some(&unary),   infix: Some(&binary)});
         rules.0.insert(TOKEN_PLUS,          ParseRule {precedence: PREC_TERM,       prefix: Some(&unary),   infix: Some(&binary)});
         rules.0.insert(TOKEN_STAR,          ParseRule {precedence: PREC_FACTOR,     prefix: Some(&unary),   infix: Some(&binary)});
@@ -812,7 +917,6 @@ impl ParseRules {
     }
 }
 
-// Entry point to compile source code.
 // 1. Scan the code and create a vector of Tokens
 // 2. Compile the tokens and emit bytecode onto the Chunk
 pub fn compile(source: &str) -> Result<LoxFn, CompilerError> {
@@ -828,7 +932,7 @@ pub fn compile(source: &str) -> Result<LoxFn, CompilerError> {
     }
     compiler.emit_byte(OP_RETURN as u8, compiler.current.line_num);
     if crate::debug() {
-        disassemble_chunk(compiler.chunk(), "Compiling Complete");
+        disassemble_chunk(compiler.chunk(), "Compiling Script Complete");
     }
 
     if compiler.had_error {

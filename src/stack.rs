@@ -45,6 +45,13 @@ impl<T: std::fmt::Debug + std::cmp::PartialEq + std::clone::Clone> Stack<T> {
         }
     }
 
+    pub fn pop_mult(&mut self, count: usize) -> Result<(), &'static str> {
+        for _ in 0..count {
+            self.pop()?;
+        }
+        Ok(())
+    }
+
     // Returns a reference to the current end of the stack; no updates.
     //
     // Since the stack is initialized to all None and we mem repalce anything 
@@ -84,6 +91,10 @@ impl<T: std::fmt::Debug + std::cmp::PartialEq + std::clone::Clone> Stack<T> {
         }
     }
 
+    pub fn take(&mut self, index: usize, replacement: T) -> Result<T, &'static str> {
+        replace(&mut self.stack[index], Some(replacement)).ok_or("Nothing at index")
+    }
+
     // Linear scan starting from last pushed element
     pub fn find(&self, needle: T) -> Option<usize> {
         if self.top > 0 {
@@ -99,6 +110,10 @@ impl<T: std::fmt::Debug + std::cmp::PartialEq + std::clone::Clone> Stack<T> {
             }
         }
         None
+    } 
+
+    pub fn len(&self) -> usize {
+        self.top
     }
 
     pub fn print_stack(&self) {

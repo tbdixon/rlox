@@ -138,6 +138,22 @@ impl VM {
         Ok(self.frame()?.function.chunk.code[ip-1])
     }
 
+    fn call(&mut self, function: LoxFn, slot: usize) -> Result<InterpretResult> {
+       let frame = CallFrame {
+            function,
+            slot,
+            ip: 0,
+        };
+        self.frames.push(frame);
+        Ok(INTERPRET_OK)
+    }
+
+    fn discard_frame(&mut self) -> Result<InterpretResult> {
+        let frame = self.frames.pop()?;
+        self.stack.pop_mult(self.stack.len() - frame.slot + 1 as usize)?; 
+        Ok(INTERPRET_OK)
+    }
+
     // Very duplicated code, but as of yet I can't figure out a way to pass in a generic
     // function that will take either f64, f64 -> f64 and String, String -> String.
     fn binary_add(&mut self) -> Result<InterpretResult> {
@@ -280,12 +296,8 @@ impl VM {
     // Main entry point into the VM -- compile and run.
     pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
         let function = compile(source)?;
-        let frame = CallFrame {
-            function,
-            slot: 0,
-            ip: 0,
-        };
-        self.frames.push(frame);
+        self.stack.push(Value::Str(String::from("script")));
+        self.call(function, 1)?;
         self.run()?;
         Ok(INTERPRET_OK)
     }
@@ -296,13 +308,33 @@ impl VM {
             if crate::debug() {
                 println!("-----------------------------------------------------------------");
                 self.stack.print_stack();
-                self.print_globals();
+                //self.print_globals();
                 disassemble_instruction(self.chunk()?, self.ip()?);
             }
             let instruction = self.read_byte()?;
             match OpCode::from(instruction) {
+                OP_CALL => {
+                    let arg_count = self.read_byte()? as usize;
+                    let function_idx = self.stack.len() - arg_count - 1;
+                    let function_name = self.stack.get(function_idx)?.to_string(); 
+                    let function = self.stack.take(function_idx, Value::Str(function_name))?; 
+                    if let Value::Function(f) = function {
+                        self.call(f, self.stack.len() - arg_count)
+                    }
+                    else {
+                        Err(INTERPRET_RUNTIME_ERROR("Unable to find function definition"))
+                    }
+                }
                 OP_RETURN => {
-                    return Ok(INTERPRET_OK);
+                    if self.frames.len() == 1 {
+                        self.stack.pop()?;
+                        self.frames.pop()?;
+                        return Ok(INTERPRET_OK);
+                    }
+                    let ret = self.stack.pop()?;
+                    self.discard_frame()?;
+                    self.stack.push(ret);
+                    Ok(INTERPRET_OK)
                 }
                 OP_POP => {
                     let _ = self.stack.pop()?;

@@ -1,6 +1,6 @@
 use std::fmt;
 use crate::chunk::Chunk;
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct LoxFn {
     pub name: Option<String>,
     pub arity: u8,
@@ -18,6 +18,12 @@ impl fmt::Display for LoxFn {
         write!(f, "<fn {}>", name)
     }
 }
+impl fmt::Debug for LoxFn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "LoxFn *{}", self)
+    }
+}
+
 pub enum FunctionType {
     FUNCTION,
     SCRIPT

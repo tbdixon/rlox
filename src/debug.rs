@@ -39,6 +39,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OP_JUMP_IF_FALSE => jump_instruction(OP_JUMP_IF_FALSE, 1, chunk, offset),
         OP_JUMP => jump_instruction(OP_JUMP, 1, chunk, offset),
         OP_LOOP => jump_instruction(OP_LOOP, -1, chunk, offset),
+        OP_CALL => byte_instruction(OP_CALL, chunk, offset),
         OP_UNKNOWN => {
             debugln!("Unknown Opcode Encountered");
             offset + 1
