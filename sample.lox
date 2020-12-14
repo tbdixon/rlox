@@ -1,7 +1,6 @@
-fun fib(n) {
-if( n < 2) {
-return n;
+fun a() {b();}
+fun b() {c();}
+fun c() {
+c("too", "many");
 }
-return fib(n-2) + fib(n-1);
-}
-print fib(40);
+a();

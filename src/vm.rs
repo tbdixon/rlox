@@ -50,7 +50,7 @@ pub struct CallFrame {
 // This operates with a stack of Call Frame structs that contain the function being executed (where
 // top level script is a function) that has the chunk of code. Slot is the offset into the *shared*
 // VM stack across call frames. Each call frame maintains its own ip, so after returning there is
-// no jump / return address required: the frame is popped and the next frame picks up where the ip 
+// no jump / return address required: the frame is popped and the next frame picks up where the ip
 // left off.
 pub struct VM {
     frames: Stack<CallFrame>,
@@ -78,31 +78,45 @@ impl VM {
 
     // A number of functions that help with the indirection around a vector of stacks to ensure
     // consistent handling of Option / Results and be granular with mutable and immutable borrows
-    // going into the functions as required. 
+    // going into the functions as required.
     fn ip(&self) -> Result<usize> {
-        Ok(self.frames.peek().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.ip)
-    }
-
-    fn frame(&mut self) -> Result<&mut CallFrame> {
-        self.frames.peek_mut().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))
+        Ok(self
+            .frames
+            .peek()
+            .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
+            .ip)
     }
 
     fn increment_ip(&mut self) -> Result<()> {
-        self.frames.peek_mut().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.ip += 1;
+        self.frames
+            .peek_mut()
+            .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
+            .ip += 1;
         Ok(())
     }
 
     fn chunk(&self) -> Result<&Chunk> {
-        Ok(&self.frames.peek().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.function.chunk)
+        Ok(&self
+            .frames
+            .peek()
+            .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
+            .function
+            .chunk)
     }
 
     fn add_ip(&mut self, offset: usize) -> Result<()> {
-        self.frames.peek_mut().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.ip += offset;
+        self.frames
+            .peek_mut()
+            .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
+            .ip += offset;
         Ok(())
     }
 
     fn sub_ip(&mut self, offset: usize) -> Result<()> {
-        self.frames.peek_mut().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.ip -= offset;
+        self.frames
+            .peek_mut()
+            .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
+            .ip -= offset;
         Ok(())
     }
 
@@ -111,7 +125,11 @@ impl VM {
     }
 
     fn frame_slot(&self) -> Result<usize> {
-        Ok(self.frames.peek().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.slot)
+        Ok(self
+            .frames
+            .peek()
+            .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
+            .slot)
     }
 
     // When running in REPL mode, we want a clean code chunk and stack. Globals are persistent
@@ -125,21 +143,35 @@ impl VM {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn print_globals(&self) {
         if !self.globals.is_empty() {
             println!("Globals: {:?}", self.globals);
         }
     }
 
+    fn stack_trace(&mut self, source: &str) -> Result<()> {
+        let source: Vec<&str> = source.split("\n").collect();
+        while !self.frames.is_empty() {
+            let source_line = self.chunk()?.lines[self.ip()?] - 1;
+            println!("[line {}] in {}", source_line + 1, source[source_line as usize]);
+            self.frames.pop()?;
+        }
+        Ok(())
+    }
+
     // Reads the next byte and moves the instruction pointer.
     fn read_byte(&mut self) -> Result<u8> {
         self.increment_ip()?;
         let ip = self.ip()?;
-        Ok(self.frame()?.function.chunk.code[ip-1])
+        Ok(self.chunk()?.code[ip - 1])
     }
 
     fn call(&mut self, function: LoxFn, slot: usize) -> Result<InterpretResult> {
-       let frame = CallFrame {
+        if self.frames.len() == 255 {
+            return Err(INTERPRET_RUNTIME_ERROR("Stack overflow"));
+        }
+        let frame = CallFrame {
             function,
             slot,
             ip: 0,
@@ -150,7 +182,8 @@ impl VM {
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
         let frame = self.frames.pop()?;
-        self.stack.pop_mult(self.stack.len() - frame.slot + 1 as usize)?; 
+        self.stack
+            .pop_mult(self.stack.len() - frame.slot + 1 as usize)?;
         Ok(INTERPRET_OK)
     }
 
@@ -285,7 +318,10 @@ impl VM {
 
     // Definition of 'false' in rlox world
     fn is_falsey(&self) -> Result<bool> {
-        let val = self.stack.peek().ok_or(INTERPRET_RUNTIME_ERROR("Empty stack"))?;
+        let val = self
+            .stack
+            .peek()
+            .ok_or(INTERPRET_RUNTIME_ERROR("Empty stack"))?;
         match val {
             Value::Bool(b) if !b => Ok(true),
             Value::Nil() => Ok(true),
@@ -298,8 +334,13 @@ impl VM {
         let function = compile(source)?;
         self.stack.push(Value::Str(String::from("script")));
         self.call(function, 1)?;
-        self.run()?;
-        Ok(INTERPRET_OK)
+        match self.run() {
+            Ok(_) => Ok(INTERPRET_OK),
+            Err(e) => {
+                self.stack_trace(source)?;
+                Err(e)
+            }
+        }
     }
 
     fn run(&mut self) -> Result<InterpretResult> {
@@ -316,13 +357,19 @@ impl VM {
                 OP_CALL => {
                     let arg_count = self.read_byte()? as usize;
                     let function_idx = self.stack.len() - arg_count - 1;
-                    let function_name = self.stack.get(function_idx)?.to_string(); 
-                    let function = self.stack.take(function_idx, Value::Str(function_name))?; 
+                    let function_name = self.stack.get(function_idx)?.to_string();
+                    let function = self.stack.take(function_idx, Value::Str(function_name))?;
                     if let Value::Function(f) = function {
-                        self.call(f, self.stack.len() - arg_count)
-                    }
-                    else {
-                        Err(INTERPRET_RUNTIME_ERROR("Unable to find function definition"))
+                        if f.arity != arg_count as u8 {
+                            println!("Expected {} arguments in {} but got {}", f.arity, f, arg_count);
+                            Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"))
+                        } else {
+                            self.call(f, self.stack.len() - arg_count)
+                        }
+                    } else {
+                        Err(INTERPRET_RUNTIME_ERROR(
+                            "Unable to find function definition",
+                        ))
                     }
                 }
                 OP_RETURN => {
