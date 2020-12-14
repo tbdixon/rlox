@@ -4,7 +4,6 @@ use crate::chunk::{Chunk};
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token};
 use crate::debug::disassemble_chunk;
-use crate::stack::*;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -81,7 +80,7 @@ struct Compiler {
     // scope depths, popping the function off (completing compiling) pops the parallel 
     // locals and scope depths. 
     functions: Vec<LoxFn>, 
-    locals: Vec<Stack<Local>>,
+    locals: Vec<Vec<Local>>,
     scope_depths: Vec<u8>,
 }
 
@@ -94,7 +93,7 @@ fn create_jump_offset(jump_offset: usize) -> (u8,u8) {
  
 impl Compiler {
     pub fn new(tokens: Vec<Token>) -> Compiler {
-        let mut locals = Stack::new();
+        let mut locals = Vec::new();
         locals.push(Local{ name: String::from(""), depth: 0 });
         Compiler {
             tokens,
@@ -111,14 +110,14 @@ impl Compiler {
 
     fn start_function(&mut self) {
         let mut function = LoxFn::new();
-        let mut locals = Stack::new();
+        let mut locals = Vec::new();
 
         let name = String::from(&self.previous.lexeme);
         locals.push(Local{ name: name.clone(), depth: 0 });
 
         function.name = Some(name);
         self.functions.push(function);
-        self.locals.push(Stack::new());
+        self.locals.push(Vec::new());
         self.scope_depths.push(0);
     }
 
@@ -154,15 +153,22 @@ impl Compiler {
     }
 
     fn push_local(&mut self, local: Local) -> usize {
-        self.locals.last_mut().unwrap().push(local)
+        self.locals.last_mut().unwrap().push(local);
+        self.locals.last_mut().unwrap().len()
     }
 
     fn find_local(&self, needle: Local) -> Option<usize> {
-        self.locals.last().unwrap().find(needle)
+        let locals = self.locals.last().unwrap();
+        for (idx,var) in locals.iter().rev().enumerate() {
+            if *var == needle {
+                return Some(locals.len() - idx - 1);
+            }
+        }
+        None
     }
 
     fn peek_local(&self) -> Option<&Local> {
-        self.locals.last().unwrap().peek()
+        self.locals.last().unwrap().last()
     }
 
     fn pop_local(&mut self) -> Local {

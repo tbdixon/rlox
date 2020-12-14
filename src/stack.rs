@@ -8,7 +8,7 @@ use std::ops::Index;
 // 
 // The problem is that array need a fixed size at compile time, so need to determine how to
 // generalize this slightly (to handle call stacks and frame stacks) within that constraint.
-const MAX_STACK_SIZE: usize = 1024;
+const MAX_STACK_SIZE: usize = 256;
 #[derive(Debug)]
 pub struct Stack<T: std::fmt::Debug + std::cmp::PartialEq + std::clone::Clone> {
     top: usize,

@@ -3,7 +3,6 @@ use crate::chunk::OpCode::{self, *};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
-use crate::stack::*;
 use crate::value::{LoxFn, Value};
 use std::collections::HashMap;
 use std::mem::discriminant;
@@ -52,9 +51,11 @@ pub struct CallFrame {
 // VM stack across call frames. Each call frame maintains its own ip, so after returning there is
 // no jump / return address required: the frame is popped and the next frame picks up where the ip
 // left off.
+const MAX_FRAME_COUNT: usize = 64;
+const STACK_SIZE: usize = MAX_FRAME_COUNT * 256;
 pub struct VM {
-    frames: Stack<CallFrame>,
-    stack: Stack<Value>,
+    frames: Vec<CallFrame>,
+    stack: Vec<Value>,
     globals: HashMap<String, Value>,
 }
 
@@ -70,8 +71,8 @@ use crate::vm::InterpretResult::*;
 impl VM {
     pub fn new() -> VM {
         VM {
-            frames: Stack::new(),
-            stack: Stack::new(),
+            frames: Vec::with_capacity(MAX_FRAME_COUNT),
+            stack: Vec::with_capacity(STACK_SIZE),
             globals: HashMap::new(),
         }
     }
@@ -82,14 +83,14 @@ impl VM {
     fn ip(&self) -> Result<usize> {
         Ok(self
             .frames
-            .peek()
+            .last()
             .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
             .ip)
     }
 
     fn increment_ip(&mut self) -> Result<()> {
         self.frames
-            .peek_mut()
+            .last_mut()
             .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
             .ip += 1;
         Ok(())
@@ -98,7 +99,7 @@ impl VM {
     fn chunk(&self) -> Result<&Chunk> {
         Ok(&self
             .frames
-            .peek()
+            .last()
             .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
             .function
             .chunk)
@@ -106,7 +107,7 @@ impl VM {
 
     fn add_ip(&mut self, offset: usize) -> Result<()> {
         self.frames
-            .peek_mut()
+            .last_mut()
             .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
             .ip += offset;
         Ok(())
@@ -114,7 +115,7 @@ impl VM {
 
     fn sub_ip(&mut self, offset: usize) -> Result<()> {
         self.frames
-            .peek_mut()
+            .last_mut()
             .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
             .ip -= offset;
         Ok(())
@@ -127,20 +128,9 @@ impl VM {
     fn frame_slot(&self) -> Result<usize> {
         Ok(self
             .frames
-            .peek()
+            .last()
             .ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?
             .slot)
-    }
-
-    // When running in REPL mode, we want a clean code chunk and stack. Globals are persistent
-    // across each line though, so you can do
-    // var a = 5; <ENTER>
-    // print(a); <ENTER>
-    pub fn reset_repl(&mut self) -> Result<()> {
-        //        self.frame().function.chunk = Chunk::new();
-        //        self.stack = Stack::new();
-        //        self.frame().ip = 0;
-        Ok(())
     }
 
     #[allow(dead_code)]
@@ -155,7 +145,7 @@ impl VM {
         while !self.frames.is_empty() {
             let source_line = self.chunk()?.lines[self.ip()?] - 1;
             println!("[line {}] in {}", source_line + 1, source[source_line as usize]);
-            self.frames.pop()?;
+            self.frames.pop().unwrap();
         }
         Ok(())
     }
@@ -181,17 +171,18 @@ impl VM {
     }
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
-        let frame = self.frames.pop()?;
-        self.stack
-            .pop_mult(self.stack.len() - frame.slot + 1 as usize)?;
+        let frame = self.frames.pop().unwrap();
+        for _ in 0..self.stack.len() - frame.slot + 1 {
+            self.stack.pop();
+        }
         Ok(INTERPRET_OK)
     }
 
     // Very duplicated code, but as of yet I can't figure out a way to pass in a generic
     // function that will take either f64, f64 -> f64 and String, String -> String.
     fn binary_add(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop()?;
-        let left = self.stack.pop()?;
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(left + right))
@@ -203,8 +194,8 @@ impl VM {
     }
 
     fn binary(&mut self, operator: &dyn Fn(f64, f64) -> f64) -> Result<InterpretResult> {
-        let right = self.stack.pop()?;
-        let left = self.stack.pop()?;
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => {
                 self.stack.push(Value::Number(operator(left, right)))
@@ -215,7 +206,7 @@ impl VM {
     }
 
     fn negate(&mut self) -> Result<InterpretResult> {
-        let val = self.stack.pop()?;
+        let val = self.stack.pop().unwrap();
         match val {
             Value::Number(val) => self.stack.push(Value::Number(-val)),
             Value::Nil() => self.stack.push(val),
@@ -225,7 +216,7 @@ impl VM {
     }
 
     fn not(&mut self) -> Result<InterpretResult> {
-        let val = self.stack.pop()?;
+        let val = self.stack.pop().unwrap();
         self.push(match val {
             Value::Nil() => Value::Bool(true),
             Value::Bool(bool) => Value::Bool(!bool),
@@ -234,16 +225,16 @@ impl VM {
     }
 
     fn equal(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop()?;
-        let left = self.stack.pop()?;
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         self.push(Value::Bool(
             discriminant(&left) == discriminant(&right) && left == right,
         ))
     }
 
     fn cmp(&mut self, op: &dyn Fn(f64, f64) -> bool) -> Result<InterpretResult> {
-        let right = self.stack.pop()?;
-        let left = self.stack.pop()?;
+        let right = self.stack.pop().unwrap();
+        let left = self.stack.pop().unwrap();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(op(left, right))),
             _ => {
@@ -260,7 +251,7 @@ impl VM {
     }
 
     fn print(&mut self) -> Result<InterpretResult> {
-        println!("=={}==", self.stack.pop()?);
+        println!("=={:?}==", self.stack.pop().unwrap());
         Ok(INTERPRET_OK)
     }
 
@@ -284,8 +275,8 @@ impl VM {
     }
 
     fn define_global(&mut self) -> Result<InterpretResult> {
-        let init_val = self.stack.pop()?;
-        let var_name = self.stack.pop()?;
+        let init_val = self.stack.pop().unwrap();
+        let var_name = self.stack.pop().unwrap();
         self.globals.insert(var_name.to_string(), init_val);
         Ok(INTERPRET_OK)
     }
@@ -298,7 +289,7 @@ impl VM {
         // a = b = 5
         let val = self
             .stack
-            .peek()
+            .last()
             .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Invalid assigment"))?;
         if self.globals.contains_key(&var_name) {
             self.globals.insert(var_name, val.clone());
@@ -320,7 +311,7 @@ impl VM {
     fn is_falsey(&self) -> Result<bool> {
         let val = self
             .stack
-            .peek()
+            .last()
             .ok_or(INTERPRET_RUNTIME_ERROR("Empty stack"))?;
         match val {
             Value::Bool(b) if !b => Ok(true),
@@ -335,7 +326,9 @@ impl VM {
         self.stack.push(Value::Str(String::from("script")));
         self.call(function, 1)?;
         match self.run() {
-            Ok(_) => Ok(INTERPRET_OK),
+            Ok(_) => {
+                Ok(INTERPRET_OK)
+            }
             Err(e) => {
                 self.stack_trace(source)?;
                 Err(e)
@@ -348,7 +341,7 @@ impl VM {
         loop {
             if crate::debug() {
                 println!("-----------------------------------------------------------------");
-                self.stack.print_stack();
+                print!("Stack top {}: \n{:?}", self.stack.len(), self.stack);
                 //self.print_globals();
                 disassemble_instruction(self.chunk()?, self.ip()?);
             }
@@ -357,8 +350,8 @@ impl VM {
                 OP_CALL => {
                     let arg_count = self.read_byte()? as usize;
                     let function_idx = self.stack.len() - arg_count - 1;
-                    let function_name = self.stack.get(function_idx)?.to_string();
-                    let function = self.stack.take(function_idx, Value::Str(function_name))?;
+                    let function_name = self.stack.get(function_idx).unwrap().to_string();
+                    let function = std::mem::replace(&mut self.stack[function_idx], Value::Str(function_name));
                     if let Value::Function(f) = function {
                         if f.arity != arg_count as u8 {
                             println!("Expected {} arguments in {} but got {}", f.arity, f, arg_count);
@@ -374,17 +367,17 @@ impl VM {
                 }
                 OP_RETURN => {
                     if self.frames.len() == 1 {
-                        self.stack.pop()?;
-                        self.frames.pop()?;
+                        self.stack.pop().unwrap();
+                        self.frames.pop().unwrap();
                         return Ok(INTERPRET_OK);
                     }
-                    let ret = self.stack.pop()?;
+                    let ret = self.stack.pop().unwrap();
                     self.discard_frame()?;
                     self.stack.push(ret);
                     Ok(INTERPRET_OK)
                 }
                 OP_POP => {
-                    let _ = self.stack.pop()?;
+                    let _ = self.stack.pop().unwrap();
                     Ok(INTERPRET_OK)
                 }
                 OP_CONSTANT => {
@@ -413,7 +406,7 @@ impl VM {
                     // Getting a local simply entails reading it from local section (front)
                     // of stack and then pushing that onto the stack.
                     let local_index: usize = self.read_byte()? as usize;
-                    let val = self.stack.get(self.frame_slot()? + local_index)?.clone();
+                    let val = self.stack.get(self.frame_slot()? + local_index).unwrap().clone();
                     self.stack.push(val);
                     Ok(INTERPRET_OK)
                 }
@@ -424,10 +417,11 @@ impl VM {
                     let local_index: usize = self.read_byte()? as usize;
                     let new_val = self
                         .stack
-                        .peek()
+                        .last()
                         .ok_or(INTERPRET_RUNTIME_ERROR("No value on stack to assign"))?
                         .clone();
-                    self.stack.update(self.frame_slot()? + local_index, new_val);
+                    let slot = self.frame_slot()?;
+                    self.stack[slot + local_index] =  new_val;
                     Ok(INTERPRET_OK)
                 }
                 // Control flow is all similar--grab the jump offset and move the ip based on that.
