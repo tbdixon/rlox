@@ -3,7 +3,8 @@ use crate::chunk::OpCode::{self, *};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
-use crate::value::{LoxFn, Value};
+use crate::value::{LoxFn, NativeFn, Value};
+use crate::natives;
 use std::collections::HashMap;
 use std::mem::discriminant;
 use std::rc::Rc;
@@ -71,11 +72,15 @@ fn lt(left: f64, right: f64) -> bool {
 use crate::vm::InterpretResult::*;
 impl VM {
     pub fn new() -> VM {
-        VM {
+        let mut vm = VM {
             frames: Vec::with_capacity(MAX_FRAME_COUNT),
             stack: Vec::with_capacity(STACK_SIZE),
             globals: HashMap::new(),
-        }
+        };
+        vm.define_native(NativeFn{ name: "clock".to_string(), arity: 0, func: Box::new(&natives::clock) }).unwrap();
+        vm.define_native(NativeFn{ name: "println".to_string(), arity: 1, func: Box::new(&natives::println) }).unwrap();
+        vm.define_native(NativeFn{ name: "print".to_string(), arity: 1, func: Box::new(&natives::print) }).unwrap();
+        vm
     }
 
     // A number of functions that help with the indirection around a vector of stacks to ensure
@@ -146,7 +151,7 @@ impl VM {
     }
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
-        let frame = self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+        let frame = self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow discarding frame"))?;
         for _ in 0..self.stack.len() - frame.slot + 1 {
             self.stack.pop();
         }
@@ -156,8 +161,8 @@ impl VM {
     // Very duplicated code, but as of yet I can't figure out a way to pass in a generic
     // function that will take either f64, f64 -> f64 and String, String -> String.
     fn binary_add(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
-        let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+        let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow binary add"))?;
+        let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow binary add"))?;
         match (&*left, &*right) {
             (Value::Number(left), Value::Number(right)) => self.stack.push(Rc::new(Value::Number(left + right))),
             (Value::Str(left), Value::Str(right)) => {
@@ -170,8 +175,8 @@ impl VM {
     }
 
     fn binary(&mut self, operator: &dyn Fn(f64, f64) -> f64) -> Result<InterpretResult> {
-        let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
-        let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+        let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow binary"))?;
+        let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow binary"))?;
         match (&*left, &*right) {
             (Value::Number(left), Value::Number(right)) => self.stack.push(Rc::new(Value::Number(operator(*left, *right)))),
             (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
@@ -180,7 +185,7 @@ impl VM {
     }
 
     fn negate(&mut self) -> Result<InterpretResult> {
-        let val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+        let val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow negate"))?;
         match *val {
             Value::Number(val) => self.stack.push(Rc::new(Value::Number(-val))),
             Value::Nil() => self.stack.push(val),
@@ -190,7 +195,7 @@ impl VM {
     }
 
     fn not(&mut self) -> Result<InterpretResult> {
-        let val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+        let val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow not"))?;
         self.push(match *val {
             Value::Nil() => Rc::new(Value::Bool(true)),
             Value::Bool(bool) => Rc::new(Value::Bool(!bool)),
@@ -199,14 +204,14 @@ impl VM {
     }
 
     fn equal(&mut self) -> Result<InterpretResult> {
-        let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
-        let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+        let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow equal"))?;
+        let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow equal"))?;
         self.push(Rc::new(Value::Bool(discriminant(&left) == discriminant(&right) && left == right)))
     }
 
     fn cmp(&mut self, op: &dyn Fn(f64, f64) -> bool) -> Result<InterpretResult> {
-        let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
-        let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+        let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow cmp"))?;
+        let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow cmp"))?;
         match (&*left, &*right) {
             (Value::Number(left), Value::Number(right)) => self.push(Rc::new(Value::Bool(op(*left, *right)))),
             _ => return Err(INTERPRET_RUNTIME_ERROR("Comparison operands must be numbers.")),
@@ -219,7 +224,7 @@ impl VM {
     }
 
     fn print(&mut self) -> Result<InterpretResult> {
-        println!("=={:?}==", self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow")));
+        print!("{}", self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow print"))?);
         Ok(INTERPRET_OK)
     }
 
@@ -243,9 +248,16 @@ impl VM {
     }
 
     fn define_global(&mut self) -> Result<InterpretResult> {
-        let init_val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
-        let var_name = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+        let init_val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow def global"))?;
+        let var_name = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow def global"))?;
         self.globals.insert(var_name.to_string(), init_val);
+        Ok(INTERPRET_OK)
+    }
+
+    fn define_native(&mut self, function: NativeFn) -> Result<InterpretResult> {
+        let name = function.name.to_string();
+        let native = Value::NativeFunction(function);
+        self.globals.insert(name, Rc::new(native));
         Ok(INTERPRET_OK)
     }
 
@@ -290,6 +302,7 @@ impl VM {
         match self.run() {
             Ok(_) => Ok(INTERPRET_OK),
             Err(e) => {
+                println!("{:?}",e);
                 self.stack_trace(source)?;
                 Err(e)
             }
@@ -301,8 +314,8 @@ impl VM {
         loop {
             if crate::debug() {
                 println!("-----------------------------------------------------------------");
-                print!("Stack top {}: \n{:?}", self.stack.len(), self.stack);
-                //self.print_globals();
+                println!("Stack top {}: {:?}", self.stack.len(), self.stack);
+                self.print_globals();
                 disassemble_instruction(self.chunk()?, self.ip()?);
             }
             let instruction = self.read_byte()?;
@@ -310,9 +323,8 @@ impl VM {
                 OP_CALL => {
                     let arg_count = self.read_byte()? as usize;
                     let function_idx = self.stack.len() - arg_count - 1;
-                    let function_name = self.stack.get(function_idx).ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?.clone();
+                    let function_name = self.stack.get(function_idx).ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow fun name"))?.clone();
                     let function = std::mem::replace(&mut self.stack[function_idx], function_name);
-                    //TODO Fix this mess
                     match &*function {
                         Value::Function(f) => {
                             if f.arity != arg_count as u8 {
@@ -321,23 +333,31 @@ impl VM {
                             } else {
                                 self.call(f.clone(), self.stack.len() - arg_count)
                             }
-                        }
+                        },
+                        Value::NativeFunction(f) => {
+                            let arg_start = self.stack.len() - f.arity as usize;
+                            let func = &f.func;
+                            let result = func(&self.stack[arg_start..]);
+                            self.stack.truncate((self.stack.len() - f.arity as usize) - 1);
+                            self.stack.push(Rc::new(result));
+                            Ok(INTERPRET_OK)
+                        },
                         _ => Err(INTERPRET_RUNTIME_ERROR("Unable to find function definition")),
                     }
                 }
                 OP_RETURN => {
                     if self.frames.len() == 1 {
-                        self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
-                        self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+                        self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
+                        self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
                         return Ok(INTERPRET_OK);
                     }
-                    let ret = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+                    let ret = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
                     self.discard_frame()?;
                     self.stack.push(ret);
                     Ok(INTERPRET_OK)
                 }
                 OP_POP => {
-                    let _ = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?;
+                    let _ = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow pop"))?;
                     Ok(INTERPRET_OK)
                 }
                 OP_CONSTANT => {
@@ -369,7 +389,7 @@ impl VM {
                     let val = self
                         .stack
                         .get(self.frame_slot()? + local_index)
-                        .ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow"))?
+                        .ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow getting local"))?
                         .clone();
                     self.stack.push(val);
                     Ok(INTERPRET_OK)

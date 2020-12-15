@@ -25,6 +25,27 @@ impl fmt::Debug for LoxFn {
     }
 }
 
+pub struct NativeFn {
+    pub name: String,
+    pub arity: u8,
+    pub func: Box<dyn Fn(&[Rc<Value>]) -> Value>
+}
+impl fmt::Display for NativeFn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<fn {}>", &self.name)
+    }
+}impl fmt::Debug for NativeFn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Native *{}", self)
+    }
+}
+
+impl PartialEq for NativeFn {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.arity == other.arity
+    }
+}
+
 pub enum FunctionType {
     FUNCTION,
     SCRIPT
@@ -37,6 +58,7 @@ pub enum Value {
     Number(f64),
     Str(String),
     Function(Rc<LoxFn>),
+    NativeFunction(NativeFn),
 }
 
 impl fmt::Display for Value {
@@ -47,6 +69,7 @@ impl fmt::Display for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::Str(s) => write!(f, "{}", s),
             Value::Function(s) => write!(f, "{}", s),
+            Value::NativeFunction(s) => write!(f, "{}", s),
         }
     }
 }

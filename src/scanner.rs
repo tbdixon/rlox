@@ -118,7 +118,6 @@ pub enum TokenType {
     TOKEN_IF,
     TOKEN_NIL,
     TOKEN_OR,
-    TOKEN_PRINT,
     TOKEN_RETURN,
     TOKEN_SUPER,
     TOKEN_THIS,
@@ -316,7 +315,6 @@ impl Scanner<'_> {
             "if" => TOKEN_IF,
             "nil" => TOKEN_NIL,
             "or" => TOKEN_OR,
-            "print" => TOKEN_PRINT,
             "return" => TOKEN_RETURN,
             "super" => TOKEN_SUPER,
             "var" => TOKEN_VAR,
@@ -406,7 +404,7 @@ mod tests {
     #[test]
     fn test_keywords() {
         let source =
-            "and class else false for fun if nil or print return super this true var while";
+            "and class else false for fun if nil or return super this true var while";
         let mut scanner = Scanner::new(source);
         let res = vec![
             Token {
@@ -454,12 +452,7 @@ mod tests {
                 lexeme: "or".to_string(),
                 line_num: 1,
             },
-            Token {
-                kind: TOKEN_PRINT,
-                lexeme: "print".to_string(),
-                line_num: 1,
-            },
-            Token {
+           Token {
                 kind: TOKEN_RETURN,
                 lexeme: "return".to_string(),
                 line_num: 1,

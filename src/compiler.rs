@@ -348,7 +348,7 @@ impl Compiler {
     fn create_constant(&mut self, value: Value) -> usize {
         match self.chunk().find_constant(&value) {
             Some(const_idx) => const_idx,
-            _ => self.chunk().add_constant(value)
+            _ => self.chunk().add_constant(Rc::new(value))
         }
     }
 
@@ -492,9 +492,7 @@ fn parse_variable(compiler: &mut Compiler) -> usize {
 
 // Basic switch for statement types.
 fn statement(compiler: &mut Compiler) {
-    if compiler.match_advance(TOKEN_PRINT) {
-        print_stmt(compiler);
-    } else if compiler.match_advance(TOKEN_RETURN) {
+    if compiler.match_advance(TOKEN_RETURN) {
         return_statement(compiler);
     } else if compiler.match_advance(TOKEN_IF) {
         if_else_statement(compiler);
@@ -624,13 +622,6 @@ fn expr_stmt(compiler: &mut Compiler) {
     expression(compiler);
     compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
     compiler.emit_byte(OP_POP as u8, line_num);
-}
-
-fn print_stmt(compiler: &mut Compiler) {
-    let line_num = compiler.previous.line_num;
-    expression(compiler);
-    compiler.consume(TOKEN_SEMICOLON, "Expect ';' at end of statement");
-    compiler.emit_byte(OP_PRINT as u8, line_num);
 }
 
 fn return_statement(compiler: &mut Compiler) {

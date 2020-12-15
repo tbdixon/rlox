@@ -135,9 +135,8 @@ impl Chunk {
         self.code[location] = byte;
     }
 
-    pub fn add_constant(&mut self, value: Value) -> usize {
-        let rc_value = Rc::new(value);
-        self.constant_pool.push(rc_value);
+    pub fn add_constant(&mut self, value: Rc<Value>) -> usize {
+        self.constant_pool.push(value);
         self.constant_pool.len() - 1
     }
 

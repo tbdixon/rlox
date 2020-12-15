@@ -5,6 +5,7 @@ pub mod debug;
 pub mod scanner;
 pub mod vm;
 pub mod value;
+pub mod natives;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
