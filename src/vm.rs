@@ -3,8 +3,8 @@ use crate::chunk::OpCode::{self, *};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
-use crate::value::{LoxFn, NativeFn, Value};
 use crate::natives;
+use crate::value::{LoxClosure, LoxFn, NativeFn, Value};
 use std::collections::HashMap;
 use std::mem::discriminant;
 use std::rc::Rc;
@@ -77,9 +77,24 @@ impl VM {
             stack: Vec::with_capacity(STACK_SIZE),
             globals: HashMap::new(),
         };
-        vm.define_native(NativeFn{ name: "clock".to_string(), arity: 0, func: Box::new(&natives::clock) }).unwrap();
-        vm.define_native(NativeFn{ name: "println".to_string(), arity: 1, func: Box::new(&natives::println) }).unwrap();
-        vm.define_native(NativeFn{ name: "print".to_string(), arity: 1, func: Box::new(&natives::print) }).unwrap();
+        vm.define_native(NativeFn {
+            name: "clock".to_string(),
+            arity: 0,
+            func: Box::new(&natives::clock),
+        })
+        .unwrap();
+        vm.define_native(NativeFn {
+            name: "println".to_string(),
+            arity: 1,
+            func: Box::new(&natives::println),
+        })
+        .unwrap();
+        vm.define_native(NativeFn {
+            name: "print".to_string(),
+            arity: 1,
+            func: Box::new(&natives::print),
+        })
+        .unwrap();
         vm
     }
 
@@ -148,6 +163,10 @@ impl VM {
         let frame = CallFrame { function, slot, ip: 0 };
         self.frames.push(frame);
         Ok(INTERPRET_OK)
+    }
+
+    fn make_closure(&mut self, func: Rc<LoxFn>) -> Result<Rc<LoxClosure>> {
+        Ok(Rc::new(LoxClosure { func }))
     }
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
@@ -302,7 +321,7 @@ impl VM {
         match self.run() {
             Ok(_) => Ok(INTERPRET_OK),
             Err(e) => {
-                println!("{:?}",e);
+                println!("{:?}", e);
                 self.stack_trace(source)?;
                 Err(e)
             }
@@ -323,17 +342,22 @@ impl VM {
                 OP_CALL => {
                     let arg_count = self.read_byte()? as usize;
                     let function_idx = self.stack.len() - arg_count - 1;
-                    let function_name = self.stack.get(function_idx).ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow fun name"))?.clone();
+                    let function_name = self
+                        .stack
+                        .get(function_idx)
+                        .ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow fun name"))?
+                        .clone();
                     let function = std::mem::replace(&mut self.stack[function_idx], function_name);
                     match &*function {
-                        Value::Function(f) => {
+                        Value::Closure(c) => {
+                            let f = &c.func;
                             if f.arity != arg_count as u8 {
                                 println!("Expected {} arguments in {} but got {}", f.arity, f, arg_count);
                                 return Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"));
                             } else {
                                 self.call(f.clone(), self.stack.len() - arg_count)
                             }
-                        },
+                        }
                         Value::NativeFunction(f) => {
                             let arg_start = self.stack.len() - f.arity as usize;
                             let func = &f.func;
@@ -341,7 +365,7 @@ impl VM {
                             self.stack.truncate((self.stack.len() - f.arity as usize) - 1);
                             self.stack.push(Rc::new(result));
                             Ok(INTERPRET_OK)
-                        },
+                        }
                         _ => Err(INTERPRET_RUNTIME_ERROR("Unable to find function definition")),
                     }
                 }
@@ -358,6 +382,16 @@ impl VM {
                 }
                 OP_POP => {
                     let _ = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow pop"))?;
+                    Ok(INTERPRET_OK)
+                }
+                OP_CLOSURE => {
+                    let func_addr: usize = self.read_byte()? as usize;
+                    let func = self.get_constant(func_addr)?;
+                    let func = match &*func {
+                        Value::Function(f) => self.make_closure(f.clone())?,
+                        _ => return Err(INTERPRET_RUNTIME_ERROR("Invalid closure argument, function required")),
+                    };
+                    self.stack.push(Rc::new(Value::Closure(func)));
                     Ok(INTERPRET_OK)
                 }
                 OP_CONSTANT => {

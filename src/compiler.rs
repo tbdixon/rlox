@@ -658,7 +658,7 @@ fn function(compiler: &mut Compiler) {
         disassemble_chunk(&function.chunk, &format!("Compiling {} complete", function));
     }
     let function_idx = compiler.create_constant(Value::Function(Rc::new(function)));
-    compiler.emit_read_constant(function_idx);
+    compiler.emit_bytes(OP_CLOSURE as u8, function_idx as u8, compiler.previous.line_num);
 }
 
 fn expression(compiler: &mut Compiler) {

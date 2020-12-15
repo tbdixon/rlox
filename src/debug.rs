@@ -40,6 +40,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OP_JUMP => jump_instruction(OP_JUMP, 1, chunk, offset),
         OP_LOOP => jump_instruction(OP_LOOP, -1, chunk, offset),
         OP_CALL => byte_instruction(OP_CALL, chunk, offset),
+        OP_CLOSURE => closure_instruction(OP_CLOSURE, chunk, offset),
         OP_UNKNOWN => {
             debugln!("Unknown Opcode Encountered");
             offset + 1
@@ -85,6 +86,21 @@ pub fn byte_instruction(op_code: OpCode, chunk: &Chunk, offset: usize) -> usize 
         byte_instr,
     );
     offset + 2
+}
+
+pub fn closure_instruction(op_code: OpCode, chunk: &Chunk, mut offset: usize) -> usize {
+    let binary_code: u8 = op_code.into();
+    let constant_addr: usize = chunk.code[offset + 1] as usize;
+    let constant_val = &chunk.constant_pool[constant_addr];
+    debugln!(
+        "{:?} ({:#04X?})\t{:#04X?}\t{:?} ",
+        op_code,
+        binary_code,
+        constant_addr,
+        constant_val
+    );
+    offset += 2;
+    offset
 }
 
 pub fn constant_instruction(op_code: OpCode, chunk: &Chunk, offset: usize) -> usize {

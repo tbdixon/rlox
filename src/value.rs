@@ -1,6 +1,17 @@
 use std::fmt;
 use crate::chunk::Chunk;
 use std::rc::Rc;
+
+#[derive(Debug, PartialEq)]
+pub struct LoxClosure {
+    pub func: Rc<LoxFn>,
+}
+impl fmt::Display for LoxClosure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<closure {}>", self.func)
+    }
+}
+
 #[derive(PartialEq)]
 pub struct LoxFn {
     pub name: Option<String>,
@@ -39,7 +50,6 @@ impl fmt::Display for NativeFn {
         write!(f, "Native *{}", self)
     }
 }
-
 impl PartialEq for NativeFn {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name && self.arity == other.arity
@@ -59,6 +69,7 @@ pub enum Value {
     Str(String),
     Function(Rc<LoxFn>),
     NativeFunction(NativeFn),
+    Closure(Rc<LoxClosure>),
 }
 
 impl fmt::Display for Value {
@@ -70,6 +81,7 @@ impl fmt::Display for Value {
             Value::Str(s) => write!(f, "{}", s),
             Value::Function(s) => write!(f, "{}", s),
             Value::NativeFunction(s) => write!(f, "{}", s),
+            Value::Closure(s) => write!(f, "{}", s),
         }
     }
 }

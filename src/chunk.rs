@@ -34,6 +34,7 @@ pub enum OpCode {
     OP_JUMP_IF_FALSE,
     OP_LOOP,
     OP_CALL,
+    OP_CLOSURE,
     OP_UNKNOWN = 0xFF,
 }
 use crate::chunk::OpCode::*;
@@ -66,6 +67,7 @@ impl From<OpCode> for u8 {
             OP_JUMP_IF_FALSE => 0x16,
             OP_LOOP => 0x17,
             OP_CALL => 0x18,
+            OP_CLOSURE => 0x19,
             _ => 0xFF,
         }
     }
@@ -99,6 +101,7 @@ impl From<u8> for OpCode {
             0x16 => OP_JUMP_IF_FALSE,
             0x17 => OP_LOOP,
             0x18 => OP_CALL,
+            0x19 => OP_CLOSURE,
             _ => OP_UNKNOWN,
         }
     }
