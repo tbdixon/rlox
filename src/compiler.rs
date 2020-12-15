@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::mem::take;
+use std::rc::Rc;
 
 #[derive(Copy, Clone, Debug, PartialOrd, PartialEq)]
 enum Precedence {
@@ -665,7 +666,7 @@ fn function(compiler: &mut Compiler) {
     if crate::debug() {
         disassemble_chunk(&function.chunk, &format!("Compiling {} complete", function));
     }
-    let function_idx = compiler.create_constant(Value::Function(function));
+    let function_idx = compiler.create_constant(Value::Function(Rc::new(function)));
     compiler.emit_read_constant(function_idx);
 }
 

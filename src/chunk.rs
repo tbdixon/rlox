@@ -1,4 +1,5 @@
 use crate::value::*;
+use std::rc::Rc;
 use strum_macros::EnumIter;
 
 // Type checking makes it trickier to switch between consider an
@@ -103,7 +104,7 @@ impl From<u8> for OpCode {
     }
 }
 
-type ConstantPool = Vec<Value>;
+type ConstantPool = Vec<Rc<Value>>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Chunk {
@@ -135,13 +136,14 @@ impl Chunk {
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
-        self.constant_pool.push(value);
+        let rc_value = Rc::new(value);
+        self.constant_pool.push(rc_value);
         self.constant_pool.len() - 1
     }
 
     pub fn find_constant(&self, value: &Value) -> Option<usize> {
         for (idx, constant) in self.constant_pool.iter().enumerate() {
-            if constant == value {
+            if **constant == *value {
                 return Some(idx);
             }
         }

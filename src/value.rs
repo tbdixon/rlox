@@ -1,6 +1,7 @@
 use std::fmt;
 use crate::chunk::Chunk;
-#[derive(PartialEq, Clone)]
+use std::rc::Rc;
+#[derive(PartialEq)]
 pub struct LoxFn {
     pub name: Option<String>,
     pub arity: u8,
@@ -29,13 +30,13 @@ pub enum FunctionType {
     SCRIPT
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub enum Value {
     Bool(bool),
     Nil(),
     Number(f64),
     Str(String),
-    Function(LoxFn),
+    Function(Rc<LoxFn>),
 }
 
 impl fmt::Display for Value {
