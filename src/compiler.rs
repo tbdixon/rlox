@@ -57,7 +57,13 @@ impl fmt::Display for CompilerError {
 #[derive(Debug, Clone)]
 struct Local {
     name: String,
+    is_captured: bool,
     depth: u8,
+}
+
+struct Upvalue {
+    idx: usize,
+    is_local: bool
 }
 
 impl  std::cmp::PartialEq for Local {
@@ -76,12 +82,13 @@ struct Compiler {
     panic_mode: bool,
     parse_rules: ParseRules,
     // Compiler is always in a function. At the top level this is the script itself. 
-    // These functions are represented as a stack, along with the locals and scope depth 
-    // within each function. Starting a new function pushes a new stack of locals and 
-    // scope depths, popping the function off (completing compiling) pops the parallel 
+    // These functions are represented as a stack, along with the locals, scope depth 
+    // and upvalues for each function. Starting a new function pushes a new stack of locals 
+    // and scope depths, popping the function off (completing compiling) pops the parallel 
     // locals and scope depths. 
     functions: Vec<LoxFn>, 
     locals: Vec<Vec<Local>>,
+    upvalues: Vec<Vec<Upvalue>>,
     scope_depths: Vec<u8>,
 }
 
@@ -95,11 +102,12 @@ fn create_jump_offset(jump_offset: usize) -> (u8,u8) {
 impl Compiler {
     pub fn new(tokens: Vec<Token>) -> Compiler {
         let mut locals = Vec::new();
-        locals.push(Local{ name: String::from(""), depth: 0 });
+        locals.push(Local{ name: String::from(""), depth: 0, is_captured: false });
         Compiler {
             tokens,
             functions: vec![LoxFn::new()],
             locals: vec![locals],
+            upvalues: vec![Vec::new()],
             scope_depths: vec![0],
             parse_rules: ParseRules::new(),
             previous: Token::empty(),
@@ -114,11 +122,11 @@ impl Compiler {
         let mut locals = Vec::new();
 
         let name = String::from(&self.previous.lexeme);
-        locals.push(Local{ name: name.clone(), depth: 0 });
+        locals.push(Local{ name: name.clone(), depth: 0, is_captured: false });
 
         function.name = Some(name);
         self.functions.push(function);
-        self.locals.push(Vec::new());
+        self.locals.push(locals);
         self.scope_depths.push(0);
     }
 
@@ -155,13 +163,14 @@ impl Compiler {
 
     fn push_local(&mut self, local: Local) -> usize {
         self.locals.last_mut().unwrap().push(local);
-        self.locals.last_mut().unwrap().len()
+        self.locals.last_mut().unwrap().len() - 1
     }
 
-    fn find_local(&self, needle: Local) -> Option<usize> {
+    fn find_local(&self, needle: &str) -> Option<usize> {
+        // Locals is a Vec<Vec<Value>>, the last element ties to the current compiler function.
         let locals = self.locals.last().unwrap();
         for (idx,var) in locals.iter().rev().enumerate() {
-            if *var == needle {
+            if var.name == needle {
                 return Some(locals.len() - idx - 1);
             }
         }
@@ -181,16 +190,14 @@ impl Compiler {
     //  var a = a;
     // }
     fn add_local(&mut self, name: String) -> usize {
-        let local = Local { name, depth: self.depth() };
+        let local = Local { name, depth: self.depth(), is_captured: false };
         self.push_local(local)
     }
 
     // Looks for and returns the index of a local variable by name starting in current
     // depth / scope and working backwards. None if not found. 
     fn resolve_local(&self, token: &Token) -> Option<usize> {
-        let variable_name = String::from(&token.lexeme);
-        let local = Local { name: variable_name, depth: self.depth() };
-        self.find_local(local)
+        self.find_local(&token.lexeme)
     }
 
     fn begin_scope(&mut self) {
@@ -389,7 +396,7 @@ impl Compiler {
             self.parse_error("Expect expression for prefix");
         }
         
-        //println!("Precedence: {:?}. Previous: {:?}. Current: {:?}",precedence, self.previous, self.current);
+//        println!("Precedence: {:?}. Previous: {:?}. Current: {:?}",precedence, self.previous, self.current);
         
         // So long as the precedence being parsed is lower than the next token we can continue
         // parsing that as an infix operator. After parsing the 4 (as a prefix and emitting an
@@ -804,7 +811,6 @@ fn identifier(compiler: &mut Compiler, can_assign: bool) {
     if can_assign && compiler.match_advance(TOKEN_EQUAL) {
             expression(compiler);
             compiler.emit_bytes(op_set as u8, arg as u8, compiler.previous.line_num);
-            compiler.emit_byte(OP_POP as u8, compiler.previous.line_num);
     } else {
             compiler.emit_bytes(op_get as u8, arg as u8, compiler.previous.line_num);
     }
@@ -910,7 +916,7 @@ impl ParseRules {
         if let Some(parse_rule) = self.get(kind) {
             Some(parse_rule.precedence)
         } else {
-            None
+            Some(PREC_NONE)
         }
     }
 }

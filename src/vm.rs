@@ -171,7 +171,7 @@ impl VM {
     // --------------^
     //               IP
     // Stack: [...|LoxFn|Arg_0|...|Arg_N|...]
-    // ------------------^--------------------^
+    // ---------------^-----------------------^
     //       Top - Arg - 1                  Top
     //
     fn setup_call(&mut self) -> Result<InterpretResult> {
@@ -185,14 +185,14 @@ impl VM {
                     println!("Expected {} arguments in {} but got {}", f.arity, f, arg_count);
                     return Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"));
                 } else {
-                    self.call(c.clone(), self.stack.len() - arg_count)
+                    self.call(c.clone(), function_idx)
                 }
             }
             Value::NativeFunction(f) => {
-                let arg_start = self.stack.len() - f.arity as usize;
+                let arg_start = function_idx + 1;
                 let func = &f.func;
                 let result = func(&self.stack[arg_start..]);
-                self.stack.truncate((self.stack.len() - f.arity as usize) - 1);
+                self.stack.truncate(function_idx);
                 self.stack.push(Rc::new(result));
                 Ok(INTERPRET_OK)
             }
@@ -377,7 +377,7 @@ impl VM {
             func: Rc::new(compile(source)?),
         });
         self.stack.push(Rc::new(Value::Str(String::from("script"))));
-        self.call(closure, 1)?;
+        self.call(closure, 0)?;
         match self.run() {
             Ok(_) => Ok(INTERPRET_OK),
             Err(e) => {
@@ -395,7 +395,7 @@ impl VM {
             if crate::debug() {
                 println!("-----------------------------------------------------------------");
                 println!("Stack top {}: {:?}", self.stack.len(), self.stack);
-                self.print_globals();
+                //self.print_globals();
                 disassemble_instruction(self.chunk()?, self.ip()?);
             }
             let instruction = self.read_byte()?;

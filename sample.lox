@@ -1,1 +1,8 @@
-print(clock());
+{ 
+var a = 5;
+{
+var a = 10;
+print(a);
+}
+print(a);
+}
