@@ -8,7 +8,7 @@ pub struct LoxClosure {
 }
 impl fmt::Display for LoxClosure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<closure {}>", self.func)
+        write!(f, "{}", self.func)
     }
 }
 

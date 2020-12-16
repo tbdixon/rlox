@@ -3,6 +3,7 @@ name = "rlox"
 version = "0.1.0"
 authors = ["TBD"]
 edition = "2018"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

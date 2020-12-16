@@ -90,7 +90,8 @@ pub fn byte_instruction(op_code: OpCode, chunk: &Chunk, offset: usize) -> usize 
 
 pub fn closure_instruction(op_code: OpCode, chunk: &Chunk, mut offset: usize) -> usize {
     let binary_code: u8 = op_code.into();
-    let constant_addr: usize = chunk.code[offset + 1] as usize;
+    offset = offset + 1;
+    let constant_addr: usize = chunk.code[offset] as usize;
     let constant_val = &chunk.constant_pool[constant_addr];
     debugln!(
         "{:?} ({:#04X?})\t{:#04X?}\t{:?} ",
@@ -99,7 +100,7 @@ pub fn closure_instruction(op_code: OpCode, chunk: &Chunk, mut offset: usize) ->
         constant_addr,
         constant_val
     );
-    offset += 2;
+    offset += 1; 
     offset
 }
 

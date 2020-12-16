@@ -119,9 +119,9 @@ pub struct Chunk {
 impl Chunk {
     pub fn new() -> Chunk {
         Chunk {
-            code: Vec::new(),
-            lines: Vec::new(),
-            constant_pool: Vec::new(),
+            code: Vec::with_capacity(u8::MAX as usize),
+            lines: Vec::with_capacity(u8::MAX as usize),
+            constant_pool: Vec::with_capacity(u8::MAX as usize),
         }
     }
 

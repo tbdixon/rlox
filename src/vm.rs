@@ -13,6 +13,7 @@ type Result<T> = std::result::Result<T, InterpretResult>;
 
 #[derive(PartialEq, Debug)]
 pub enum InterpretResult {
+    INTERPRET_DONE,
     INTERPRET_OK,
     INTERPRET_COMPILE_ERROR,
     INTERPRET_RUNTIME_ERROR(&'static str),
@@ -39,7 +40,7 @@ impl From<crate::compiler::CompilerError> for InterpretResult {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct CallFrame {
-    function: Rc<LoxFn>,
+    closure: Rc<LoxClosure>,
     slot: usize,
     ip: usize,
 }
@@ -106,7 +107,7 @@ impl VM {
     }
 
     fn chunk(&self) -> Result<&Chunk> {
-        Ok(&self.frames.last().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.function.chunk)
+        Ok(&self.frames.last().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.closure.func.chunk)
     }
 
     fn increment_ip(&mut self) -> Result<()> {
@@ -156,11 +157,68 @@ impl VM {
         Ok(self.chunk()?.code[ip - 1])
     }
 
-    fn call(&mut self, function: Rc<LoxFn>, slot: usize) -> Result<InterpretResult> {
+    // When a call starts the code / stack looks like below. The function name and
+    // argument values are already pushed onto the stack.
+    //
+    // First we read the argument count (the operand to OP_CALL), then grab the function
+    // stored before the arg values and call that function.
+    //
+    // Calling creates a new call frame which, through indirection of functions
+    // like ip() on the VM makes the execution jump into the chunk of code on that
+    // function.
+    //
+    // Code:  [...|OP_CALL|Arg Count|...]
+    // --------------^
+    //               IP
+    // Stack: [...|LoxFn|Arg_0|...|Arg_N|...]
+    // ------------------^--------------------^
+    //       Top - Arg - 1                  Top
+    //
+    fn setup_call(&mut self) -> Result<InterpretResult> {
+        let arg_count = self.read_byte()? as usize;
+        let function_idx = self.stack.len() - arg_count - 1;
+        let function = self.stack[function_idx].clone();
+        match &*function {
+            Value::Closure(c) => {
+                let f = &c.func;
+                if f.arity != arg_count as u8 {
+                    println!("Expected {} arguments in {} but got {}", f.arity, f, arg_count);
+                    return Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"));
+                } else {
+                    self.call(c.clone(), self.stack.len() - arg_count)
+                }
+            }
+            Value::NativeFunction(f) => {
+                let arg_start = self.stack.len() - f.arity as usize;
+                let func = &f.func;
+                let result = func(&self.stack[arg_start..]);
+                self.stack.truncate((self.stack.len() - f.arity as usize) - 1);
+                self.stack.push(Rc::new(result));
+                Ok(INTERPRET_OK)
+            }
+            _ => Err(INTERPRET_RUNTIME_ERROR("Unable to find function definition")),
+        }
+    }
+
+    fn ret(&mut self) -> Result<InterpretResult> {
+        // If we are at the outer frame (<script>) then the final return will exit the
+        // program execution
+        if self.frames.len() == 1 {
+            self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
+            self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
+            return Ok(INTERPRET_DONE);
+        }
+        let ret = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
+        self.discard_frame()?;
+        self.stack.push(ret);
+        Ok(INTERPRET_OK)
+    }
+
+    fn call(&mut self, closure: Rc<LoxClosure>, slot: usize) -> Result<InterpretResult> {
         if self.frames.len() == 255 {
             return Err(INTERPRET_RUNTIME_ERROR("Stack overflow"));
         }
-        let frame = CallFrame { function, slot, ip: 0 };
+        let frame = CallFrame { closure, slot, ip: 0 };
         self.frames.push(frame);
         Ok(INTERPRET_OK)
     }
@@ -315,9 +373,11 @@ impl VM {
 
     // Main entry point into the VM -- compile and run.
     pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
-        let function = Rc::new(compile(source)?);
+        let closure = Rc::new(LoxClosure {
+            func: Rc::new(compile(source)?),
+        });
         self.stack.push(Rc::new(Value::Str(String::from("script"))));
-        self.call(function, 1)?;
+        self.call(closure, 1)?;
         match self.run() {
             Ok(_) => Ok(INTERPRET_OK),
             Err(e) => {
@@ -330,7 +390,8 @@ impl VM {
 
     fn run(&mut self) -> Result<InterpretResult> {
         debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
-        loop {
+        let mut status = INTERPRET_OK;
+        while status == INTERPRET_OK {
             if crate::debug() {
                 println!("-----------------------------------------------------------------");
                 println!("Stack top {}: {:?}", self.stack.len(), self.stack);
@@ -338,68 +399,9 @@ impl VM {
                 disassemble_instruction(self.chunk()?, self.ip()?);
             }
             let instruction = self.read_byte()?;
-            match OpCode::from(instruction) {
-                OP_CALL => {
-                    let arg_count = self.read_byte()? as usize;
-                    let function_idx = self.stack.len() - arg_count - 1;
-                    let function_name = self
-                        .stack
-                        .get(function_idx)
-                        .ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow fun name"))?
-                        .clone();
-                    let function = std::mem::replace(&mut self.stack[function_idx], function_name);
-                    match &*function {
-                        Value::Closure(c) => {
-                            let f = &c.func;
-                            if f.arity != arg_count as u8 {
-                                println!("Expected {} arguments in {} but got {}", f.arity, f, arg_count);
-                                return Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"));
-                            } else {
-                                self.call(f.clone(), self.stack.len() - arg_count)
-                            }
-                        }
-                        Value::NativeFunction(f) => {
-                            let arg_start = self.stack.len() - f.arity as usize;
-                            let func = &f.func;
-                            let result = func(&self.stack[arg_start..]);
-                            self.stack.truncate((self.stack.len() - f.arity as usize) - 1);
-                            self.stack.push(Rc::new(result));
-                            Ok(INTERPRET_OK)
-                        }
-                        _ => Err(INTERPRET_RUNTIME_ERROR("Unable to find function definition")),
-                    }
-                }
-                OP_RETURN => {
-                    if self.frames.len() == 1 {
-                        self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
-                        self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
-                        return Ok(INTERPRET_OK);
-                    }
-                    let ret = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow ret"))?;
-                    self.discard_frame()?;
-                    self.stack.push(ret);
-                    Ok(INTERPRET_OK)
-                }
-                OP_POP => {
-                    let _ = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow pop"))?;
-                    Ok(INTERPRET_OK)
-                }
-                OP_CLOSURE => {
-                    let func_addr: usize = self.read_byte()? as usize;
-                    let func = self.get_constant(func_addr)?;
-                    let func = match &*func {
-                        Value::Function(f) => self.make_closure(f.clone())?,
-                        _ => return Err(INTERPRET_RUNTIME_ERROR("Invalid closure argument, function required")),
-                    };
-                    self.stack.push(Rc::new(Value::Closure(func)));
-                    Ok(INTERPRET_OK)
-                }
-                OP_CONSTANT => {
-                    let constant_addr: usize = self.read_byte()? as usize;
-                    let constant = self.get_constant(constant_addr)?.clone();
-                    self.stack.push(constant);
-                    Ok(INTERPRET_OK)
-                }
+            status = match OpCode::from(instruction) {
+                OP_CALL => self.setup_call(),
+                OP_RETURN => self.ret(),
                 OP_NEGATE => self.negate(),
                 OP_ADD => self.binary_add(),
                 OP_MULTIPLY => self.binary(&std::ops::Mul::mul),
@@ -416,9 +418,39 @@ impl VM {
                 OP_GET_GLOBAL => self.get_global(),
                 OP_DEFINE_GLOBAL => self.define_global(),
                 OP_SET_GLOBAL => self.set_global(),
+                OP_POP => {
+                    self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow pop"))?;
+                    Ok(INTERPRET_OK)
+                }
+                OP_CLOSURE => {
+                    // Closure sets up a runtime representation of a LoxFn
+                    let func_addr: usize = self.read_byte()? as usize;
+                    let func = self.get_constant(func_addr)?;
+                    let func = match &*func {
+                        Value::Function(f) => self.make_closure(f.clone())?,
+                        _ => return Err(INTERPRET_RUNTIME_ERROR("Invalid closure argument, function required")),
+                    };
+                    self.stack.push(Rc::new(Value::Closure(func)));
+                    Ok(INTERPRET_OK)
+                }
+                OP_CONSTANT => {
+                    // Puts a constant defined in the code chunk constant pool onto the stack
+                    let constant_addr: usize = self.read_byte()? as usize;
+                    let constant = self.get_constant(constant_addr)?.clone();
+                    self.stack.push(constant);
+                    Ok(INTERPRET_OK)
+                }
                 OP_GET_LOCAL => {
                     // Getting a local simply entails reading it from local section (front)
-                    // of stack and then pushing that onto the stack.
+                    // of stack and then pushing that onto the stack. The first spot is reservered
+                    // for use by the VM so indices start at 1 for user definined locals.
+                    //
+                    // The offset of frame_slot is since the stack is shared across all call
+                    // frames
+                    //
+                    // [F1|..|F2|..|F3|Local1|Local2
+                    // --------------^----------^
+                    //      frame_slot    frame_slot + 2
                     let local_index: usize = self.read_byte()? as usize;
                     let val = self
                         .stack
@@ -459,5 +491,6 @@ impl VM {
                 OP_UNKNOWN => Err(INTERPRET_COMPILE_ERROR),
             }?;
         }
+        Ok(status)
     }
 }
