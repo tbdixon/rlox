@@ -119,12 +119,10 @@ impl Compiler {
 
     fn start_function(&mut self) {
         let mut function = LoxFn::new();
+        function.name = Some(String::from(&self.previous.lexeme));
         let mut locals = Vec::new();
+        locals.push(Local{ name: String::from(""), depth: 0, is_captured: false });
 
-        let name = String::from(&self.previous.lexeme);
-        locals.push(Local{ name: name.clone(), depth: 0, is_captured: false });
-
-        function.name = Some(name);
         self.functions.push(function);
         self.locals.push(locals);
         self.scope_depths.push(0);

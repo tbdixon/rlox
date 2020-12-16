@@ -170,9 +170,9 @@ impl VM {
     // Code:  [...|OP_CALL|Arg Count|...]
     // --------------^
     //               IP
-    // Stack: [...|LoxFn|Arg_0|...|Arg_N|...]
-    // ---------------^-----------------------^
-    //       Top - Arg - 1                  Top
+    // Stack: [VM_SLOT|LoxFn|Arg_0|...|Arg_N|...]
+    // --------------------^------------------^
+    //         Top - Arg - 1                Top
     //
     fn setup_call(&mut self) -> Result<InterpretResult> {
         let arg_count = self.read_byte()? as usize;
@@ -229,7 +229,7 @@ impl VM {
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
         let frame = self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow discarding frame"))?;
-        for _ in 0..self.stack.len() - frame.slot + 1 {
+        for _ in 0..self.stack.len() - frame.slot {
             self.stack.pop();
         }
         Ok(INTERPRET_OK)
