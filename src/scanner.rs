@@ -1,5 +1,7 @@
 use itertools::multipeek;
 use itertools::structs::MultiPeek;
+use std::error::Error;
+use std::fmt;
 use std::iter::Enumerate;
 use std::str::Chars;
 
@@ -15,7 +17,7 @@ pub struct Scanner<'a> {
 }
 
 // Basic type wrapper and helper functions to get at the index and raw characters while iterating
-// through the source code. 
+// through the source code.
 type SourceEnumItem = (usize, char);
 trait TupleExt {
     fn ch(&self) -> char;
@@ -42,7 +44,7 @@ impl CharExt for char {
 }
 
 // Implementing an extension on MultiPeek for easier iteration through the source code. Standard
-// peek can only look ahead a single character, scanning requires slightly more look ahead. 
+// peek can only look ahead a single character, scanning requires slightly more look ahead.
 trait MultiPeekExt {
     // Peek n ahead in the iterator
     fn peek_nth(&mut self, n: usize) -> Option<SourceEnumItem>;
@@ -55,7 +57,7 @@ trait MultiPeekExt {
 impl<I: Iterator<Item = SourceEnumItem>> MultiPeekExt for MultiPeek<I> {
     fn peek_nth(&mut self, n: usize) -> Option<SourceEnumItem> {
         // MultiPeek keeps a separate stack / pointer, to iterate through loop up to the nth spot
-        // then return a copy of that element and reset the peek pointer. 
+        // then return a copy of that element and reset the peek pointer.
         let mut nth = self.peek();
         for _ in 0..n {
             nth = self.peek();
@@ -130,7 +132,7 @@ pub enum TokenType {
     TOKEN_EMPTY, // Placeholder for Null token
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Token {
     pub kind: TokenType,
     pub lexeme: String,
@@ -186,6 +188,65 @@ impl Default for Token {
     }
 }
 
+pub struct TokenStream {
+    tokens: Vec<Token>,
+}
+
+#[derive(Debug)]
+pub struct TokenStreamError {
+    msg: String,
+}
+
+impl Error for TokenStreamError {}
+impl fmt::Display for TokenStreamError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Error parsing: {}", self.msg)
+    }
+}
+
+impl TokenStream {
+    pub fn new(tokens: Vec<Token>) -> TokenStream {
+        TokenStream { tokens }
+    }
+
+    pub fn next(&mut self) -> Token {
+        self.tokens.pop().unwrap()
+    }
+
+    pub fn peek(&mut self) -> Token {
+        self.tokens.last().unwrap_or(&Token::eof(-1)).clone()
+    }
+
+    pub fn match_(&mut self, expected: TokenType) -> bool {
+        if expected == self.peek().kind {
+            self.next();
+            return true
+        }
+        false
+    }
+    
+    // Consumes and advances if there is a specific type of
+    // token encountered e.g. to consume the closing ")" in a grouping
+    // this will ensure that token is found and then advance beyond it.
+    //
+    // This requires the next token be expected type or else it is
+    // an error. See match_advance for a less restrictive consumption.
+    /*    fn consume(&mut self, expected: TokenType) -> crate::Result<()> {
+        if self.peek().kind == expected {
+            self.next();
+        } else {
+            Err("")
+        }
+    }*/
+
+    pub fn expect(&mut self, expected: TokenType, msg: &str) -> crate::Result<Token> {
+        match self.peek().kind {
+            e if e == expected => Ok(self.next()),
+            _ => Err(Box::new(TokenStreamError { msg: String::from(msg) })),
+        }
+    }
+}
+
 // Scanner works by iterating over the source file as a Character iterator.
 // The iterator points to the character that will be scanned *next* hence peek_char
 // returns the next up character as well. While scanning this keeps track of the
@@ -228,10 +289,7 @@ impl Scanner<'_> {
                 self.line_num += 1;
             }
             if self.peek_char() == '/' && self.peek_two_chars() == '/' {
-                self.source_itr
-                    .find(|c| c.ch() == '\n')
-                    .unwrap_or(EOF_MARKER)
-                    .ch();
+                self.source_itr.find(|c| c.ch() == '\n').unwrap_or(EOF_MARKER).ch();
                 self.line_num += 1;
             }
         }
@@ -328,7 +386,7 @@ impl Scanner<'_> {
         }
     }
 
-    pub fn scan(&mut self) -> Vec<Token> {
+    pub fn scan(&mut self) -> TokenStream {
         let mut tokens = Vec::new();
         let mut token = self.scan_token();
         while !token.is_eof() {
@@ -337,7 +395,7 @@ impl Scanner<'_> {
         }
         tokens.push(token);
         tokens.reverse();
-        tokens
+        TokenStream::new(tokens)
     }
 
     pub fn scan_token(&mut self) -> Token {
@@ -403,8 +461,7 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let source =
-            "and class else false for fun if nil or return super this true var while";
+        let source = "and class else false for fun if nil or return super this true var while";
         let mut scanner = Scanner::new(source);
         let res = vec![
             Token {
@@ -452,7 +509,7 @@ mod tests {
                 lexeme: "or".to_string(),
                 line_num: 1,
             },
-           Token {
+            Token {
                 kind: TOKEN_RETURN,
                 lexeme: "return".to_string(),
                 line_num: 1,
