@@ -353,6 +353,14 @@ impl VM {
         }
     }
 
+    fn get_upvalue(&mut self) -> Result<InterpretResult> {
+        unimplemented!();
+    }
+
+    fn set_upvalue(&mut self) -> Result<InterpretResult> {
+        unimplemented!();
+    }
+
     // Pulls the two bytes that make up the 16 bit jump offset and return this
     // offset (to be used to increment / decrement the instruction pointer).
     fn get_jump_offset(&mut self) -> Result<usize> {
@@ -418,6 +426,8 @@ impl VM {
                 OP_GET_GLOBAL => self.get_global(),
                 OP_DEFINE_GLOBAL => self.define_global(),
                 OP_SET_GLOBAL => self.set_global(),
+                OP_GET_UPVALUE => self.get_upvalue(),
+                OP_SET_UPVALUE => self.set_upvalue(),
                 OP_POP => {
                     self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow pop"))?;
                     Ok(INTERPRET_OK)

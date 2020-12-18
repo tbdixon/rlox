@@ -27,6 +27,7 @@ struct Local {
     depth: u8,
 }
 
+#[derive(Debug)]
 struct Upvalue {
     idx: usize,
     is_local: bool,
@@ -82,8 +83,20 @@ impl Compiler {
         Compiler::new(self.tokens.clone(), &mut *self, Some(fun_name.to_string()))
     }
 
-    fn end_function(self) -> LoxFn {
-        self.function
+    // TODO: Verify how drop works here with raw pointer.
+    fn end_function(self) {
+        if crate::debug() {
+            disassemble_chunk(&self.function.chunk, &format!("Compiling {} complete", self.function));
+        }
+        unsafe {
+            let enclosing = &mut *self.enclosing;
+            let function_idx = enclosing.create_constant(Value::Function(Rc::new(self.function)));
+            enclosing.emit_bytes(OP_CLOSURE as u8, function_idx as u8);
+            for upvalue in self.upvalues {
+                enclosing.emit_byte(if upvalue.is_local{ 0x1 } else { 0x0 });
+                enclosing.emit_byte(upvalue.idx as u8);
+            }
+        }
     }
 
     fn push_local(&mut self, local: Local) -> usize {
@@ -127,6 +140,56 @@ impl Compiler {
         self.find_local(&token.lexeme)
     }
 
+    fn add_upvalue(&mut self, upvalue: Upvalue) -> usize {
+        // If the upvalue already exists in this function, return that index into the upvalue
+        // stack.
+        for (idx, existing) in self.upvalues.iter().enumerate() {
+            if upvalue.idx == existing.idx && upvalue.is_local == existing.is_local {
+                return idx;
+            }
+        }
+        self.upvalues.push(upvalue);
+        self.function.upvalue_count += 1;
+        self.upvalues.len() - 1
+    }
+
+    fn resolve_upvalue(&mut self, token: &Token) -> Option<usize> {
+        // Enclosing is a raw pointer--Null occurs for the outermost function / compiler
+        // and means that the variable is global (or a syntax error and does not exist).
+        if self.enclosing.is_null() {
+            return None;
+        }
+        unsafe {
+            // We check the enclosing function for the variable as a local, if found add the
+            // upvalue here as a local.
+            //
+            // If we do not find it "locally" in the enclosing function, recursively search for
+            // an *upvalue* in the enclosing function.
+            //
+            // fn a() {
+            //  var a; -> < a: Local
+            //  fn b() {  |
+            //   var b;   < a: Local Upvalue
+            //    fn c() {|
+            //     a;     < a: Non-local Upvalue
+            //    }
+            //  }
+            // }
+            match (*self.enclosing).resolve_local(token) {
+                Some(local_idx) => Some(self.add_upvalue(Upvalue {
+                    idx: local_idx,
+                    is_local: true,
+                })),
+                None => (*self.enclosing).resolve_upvalue(token).map(|upvalue_idx| {
+                    self.add_upvalue(Upvalue {
+                        idx: upvalue_idx,
+                        is_local: false,
+                    })
+                }),
+            }
+        }
+    }
+
     fn begin_scope(&mut self) {
         self.depth += 1;
     }
@@ -161,7 +224,7 @@ impl Compiler {
     }
 
     fn expect(&mut self, kind: TokenType, msg: &'static str) {
-        let ret = self.tokens.borrow_mut().expect(kind, msg); 
+        let ret = self.tokens.borrow_mut().expect(kind, msg);
         match ret {
             Ok(_) => (),
             Err(_) => self.parse_error(msg),
@@ -301,7 +364,7 @@ impl Compiler {
             _ => self.parse_error("Expect expression for prefix"),
         }
 
-//        println!("Precedence after prefix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
+        //        println!("Precedence after prefix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
 
         // So long as the precedence being parsed is lower than the next token we can continue
         // parsing that as an infix operator. After parsing the 4 (as a prefix and emitting an
@@ -320,7 +383,7 @@ impl Compiler {
         //            prefix
         while precedence <= get_precedence(self.peek().kind) {
             let token = self.peek();
-           // println!("Precedence before infix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
+            // println!("Precedence before infix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
             match token.kind {
                 TOKEN_LEFT_PAREN => self.call(),
                 TOKEN_OR => self.or(),
@@ -669,12 +732,19 @@ impl Compiler {
                 op_set = OP_SET_LOCAL;
                 op_get = OP_GET_LOCAL;
             }
-            _ => {
-                let identifier = identifier.lexeme.to_string();
-                arg = self.create_constant(Value::Str(identifier));
-                op_set = OP_SET_GLOBAL;
-                op_get = OP_GET_GLOBAL;
-            }
+            None => match self.resolve_upvalue(&identifier) {
+                Some(upvalue_idx) => {
+                    arg = upvalue_idx;
+                    op_set = OP_SET_UPVALUE;
+                    op_get = OP_GET_UPVALUE;
+                }
+                None => {
+                    let identifier = identifier.lexeme.to_string();
+                    arg = self.create_constant(Value::Str(identifier));
+                    op_set = OP_SET_GLOBAL;
+                    op_get = OP_GET_GLOBAL;
+                }
+            },
         };
         if can_assign && self.match_(TOKEN_EQUAL) {
             self.expression();
@@ -762,14 +832,7 @@ impl Compiler {
 
         compiler.block_stmt();
         compiler.emit_return();
-        let function = compiler.end_function();
-
-        if crate::debug() {
-            disassemble_chunk(&function.chunk, &format!("Compiling {} complete", function));
-        }
-
-        let function_idx = self.create_constant(Value::Function(Rc::new(function)));
-        self.emit_bytes(OP_CLOSURE as u8, function_idx as u8);
+        compiler.end_function();
     }
 }
 
@@ -787,6 +850,7 @@ pub fn compile(source: &str) -> Result<LoxFn, CompilerError> {
     }
     compiler.emit_byte(OP_RETURN as u8);
     if crate::debug() {
+        println!("{:?}", compiler.function.chunk);
         disassemble_chunk(&compiler.function.chunk, "Compiling Script Complete");
     }
 

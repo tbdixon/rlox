@@ -35,6 +35,8 @@ pub enum OpCode {
     OP_LOOP,
     OP_CALL,
     OP_CLOSURE,
+    OP_SET_UPVALUE,
+    OP_GET_UPVALUE,
     OP_UNKNOWN = 0xFF,
 }
 use crate::chunk::OpCode::*;
@@ -68,6 +70,8 @@ impl From<OpCode> for u8 {
             OP_LOOP => 0x17,
             OP_CALL => 0x18,
             OP_CLOSURE => 0x19,
+            OP_SET_UPVALUE => 0x1A,
+            OP_GET_UPVALUE => 0x1B,
             _ => 0xFF,
         }
     }
@@ -102,6 +106,8 @@ impl From<u8> for OpCode {
             0x17 => OP_LOOP,
             0x18 => OP_CALL,
             0x19 => OP_CLOSURE,
+            0x1A => OP_SET_UPVALUE,
+            0x1B => OP_GET_UPVALUE,
             _ => OP_UNKNOWN,
         }
     }

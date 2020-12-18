@@ -17,6 +17,7 @@ pub struct LoxFn {
     pub name: Option<String>,
     pub arity: u8,
     pub chunk: Chunk,
+    pub upvalue_count: u8,
 }
 impl LoxFn {
     pub fn new() -> Self {
@@ -24,6 +25,7 @@ impl LoxFn {
             name: None,
             arity: 0,
             chunk: Chunk::new(),
+            upvalue_count: 0,
         }
     }
 }
