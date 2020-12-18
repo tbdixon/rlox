@@ -1,5 +1,5 @@
-use std::fmt;
 use crate::chunk::Chunk;
+use std::fmt;
 use std::rc::Rc;
 
 #[derive(Debug, PartialEq)]
@@ -20,7 +20,11 @@ pub struct LoxFn {
 }
 impl LoxFn {
     pub fn new() -> Self {
-        LoxFn { name: None, arity: 0, chunk: Chunk::new() }
+        LoxFn {
+            name: None,
+            arity: 0,
+            chunk: Chunk::new(),
+        }
     }
 }
 impl fmt::Display for LoxFn {
@@ -39,13 +43,14 @@ impl fmt::Debug for LoxFn {
 pub struct NativeFn {
     pub name: String,
     pub arity: u8,
-    pub func: Box<dyn Fn(&[Rc<Value>]) -> Value>
+    pub func: Box<dyn Fn(&[Rc<Value>]) -> Value>,
 }
 impl fmt::Display for NativeFn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "<fn {}>", &self.name)
     }
-}impl fmt::Debug for NativeFn {
+}
+impl fmt::Debug for NativeFn {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Native *{}", self)
     }
@@ -58,7 +63,7 @@ impl PartialEq for NativeFn {
 
 pub enum FunctionType {
     FUNCTION,
-    SCRIPT
+    SCRIPT,
 }
 
 #[derive(Debug, PartialEq)]
@@ -85,5 +90,3 @@ impl fmt::Display for Value {
         }
     }
 }
-
-

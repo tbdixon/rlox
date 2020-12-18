@@ -301,7 +301,7 @@ impl Compiler {
             _ => self.parse_error("Expect expression for prefix"),
         }
 
-        //println!("Precedence after prefix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
+//        println!("Precedence after prefix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
 
         // So long as the precedence being parsed is lower than the next token we can continue
         // parsing that as an infix operator. After parsing the 4 (as a prefix and emitting an
@@ -320,7 +320,7 @@ impl Compiler {
         //            prefix
         while precedence <= get_precedence(self.peek().kind) {
             let token = self.peek();
-            //println!("Precedence before infix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
+           // println!("Precedence before infix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
             match token.kind {
                 TOKEN_LEFT_PAREN => self.call(),
                 TOKEN_OR => self.or(),
@@ -548,6 +548,7 @@ impl Compiler {
     }
 
     fn grouping(&mut self) {
+        self.expect(TOKEN_LEFT_PAREN, "Expect opening '('");
         self.expression();
         self.expect(TOKEN_RIGHT_PAREN, "Expect closing ')'");
     }
