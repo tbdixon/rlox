@@ -3,7 +3,7 @@ use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Upvalue {
-    pub location: *mut Value,
+    pub location: usize,
     pub closed: Option<Value>
 }
 

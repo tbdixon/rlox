@@ -58,7 +58,7 @@ const STACK_SIZE: usize = MAX_FRAME_COUNT * 256;
 pub struct VM {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
-    open_upvalues: Vec<Upvalue>,
+    upvalues: Vec<Upvalue>,
     globals: HashMap<String, Value>,
 }
 
@@ -76,7 +76,7 @@ impl VM {
         let mut vm = VM {
             frames: Vec::with_capacity(MAX_FRAME_COUNT),
             stack: Vec::with_capacity(STACK_SIZE),
-            open_upvalues: Vec::with_capacity(u8::MAX as usize),
+            upvalues: Vec::with_capacity(u8::MAX as usize),
             globals: HashMap::new(),
         };
         vm.define_native(NativeFn {
@@ -153,6 +153,13 @@ impl VM {
     fn print_globals(&self) {
         if !self.globals.is_empty() {
             println!("Globals: {:?}", self.globals);
+        }
+    }
+
+    #[allow(dead_code)]
+    fn print_upvals(&self) {
+        if !self.upvalues.is_empty() {
+            println!("Upvalues: {:?}", self.upvalues);
         }
     }
 
@@ -245,29 +252,25 @@ impl VM {
 
     fn close_upvalue(&mut self) -> Result<InterpretResult>{
         let val = self.pop()?;
-        let val_addr = &val as *const _ as *mut Value;
-        for uv in &mut self.open_upvalues {
-            if uv.location == val_addr {
-                uv.closed = Some(val);
+        let location = self.stack.len();
+        for upvalue in &mut self.upvalues {
+            if upvalue.location == location {
+                upvalue.closed = Some(val);
                 return Ok(INTERPRET_OK);
             }
         }
         return Ok(INTERPRET_OK);
     }
 
-    fn capture_upvalue(&mut self, local: *mut Value) -> *mut Upvalue {
-        for uv in &mut self.open_upvalues {
-            if uv.location == local {
-                return uv;
+    fn capture_upvalue(&mut self, location: usize) -> *mut Upvalue {
+        for upvalue in &mut self.upvalues {
+            if upvalue.closed == None && upvalue.location == location {
+                return upvalue;
             }
         }
-        let upv = Upvalue {
-            location: local,
-            closed: None,
-        };
-        self.open_upvalues.push(upv);
-        let len = self.open_upvalues.len() - 1;
-        &mut self.open_upvalues[len]
+        self.upvalues.push(Upvalue{ location, closed: None });
+        let len = self.upvalues.len() - 1;
+        &mut self.upvalues[len]
     }
 
     fn make_closure(&mut self, func: *const LoxFn) -> Result<LoxClosure> {
@@ -278,9 +281,8 @@ impl VM {
                 let is_local = self.read_byte()?;
                 let idx = self.read_byte()?;
                 let upvalue: *mut Upvalue = if is_local == 0x1 {
-                    let slot = self.slot()? + idx as usize;
-                    let local: *mut Value = &self.stack[slot] as *const _ as *mut Value;
-                    self.capture_upvalue(local)
+                    let location = self.slot()? + idx as usize;
+                    self.capture_upvalue(location)
                 } else {
                     self.closure()?.upvalues[idx as usize]
                 };
@@ -292,9 +294,10 @@ impl VM {
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
         let frame = self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Error discarding call frame"))?;
-        for _ in 0..self.stack.len() - frame.slot {
-            self.pop()?;
+        for _ in 0..self.stack.len() - frame.slot - 1 {
+            self.close_upvalue()?;
         }
+        self.pop()?;
         Ok(INTERPRET_OK)
     }
 
@@ -420,11 +423,11 @@ impl VM {
         let upvalue_idx = self.read_byte()? as usize;
         let upvalue = self.closure()?.upvalues[upvalue_idx];
         unsafe {
-            let v = match &(*upvalue).closed {
+            let val = match &(*upvalue).closed {
                 Some(val) => val.clone(),
-                None => (*(*upvalue).location).clone(),
+                None => self.stack[(*upvalue).location].clone(),
             };
-            self.push(v)?;
+            self.push(val)?;
         }
         Ok(INTERPRET_OK)
     }
@@ -439,7 +442,7 @@ impl VM {
                     (*upvalue).closed = Some(new_val);
                 }
                 None => {
-                    let _ = std::ptr::replace((*upvalue).location, new_val);
+                    self.stack[(*upvalue).location] = new_val;
                 }
             }
         }
@@ -478,6 +481,7 @@ impl VM {
                 println!("-----------------------------------------------------------------");
                 println!("Stack top {}: {:?}", self.stack.len(), self.stack);
                 //self.print_globals();
+                self.print_upvals();
                 disassemble_instruction(self.chunk()?, self.ip()?);
             }
             let instruction = self.read_byte()?;

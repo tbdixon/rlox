@@ -1,8 +1,9 @@
 fun outer() {
-	var x =  "outside";
+	println("Outer execution");
+	var x =  "Outer var x";
 	fun inner() {
-		print("abc");
-		print(x);
+		println("Inner execution");
+		println(x);
 	}
 	return inner;
 }
