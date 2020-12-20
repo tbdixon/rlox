@@ -5,8 +5,17 @@ fun outer() {
 		var c = 3;
 		var d = 4;
 		fun inner() {
-			print(a + c + b + d);
+			c = 5;
+			a = 6;
+			print("Expect 17: ");
+			println(a + c + b + d);
 		}
+		inner();
+		print("Expect 9: ");
+		println(c+d);
 	}
-}
-
+	middle();
+			print("Expect 8: ");
+			println(a + b);
+	}
+outer();

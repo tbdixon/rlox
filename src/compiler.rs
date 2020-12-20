@@ -90,10 +90,10 @@ impl Compiler {
         }
         unsafe {
             let enclosing = &mut *self.enclosing;
-            let function_idx = enclosing.create_constant(Value::Function(Rc::new(self.function)));
+            let function_idx = enclosing.create_constant(Value::Function(self.function));
             enclosing.emit_bytes(OP_CLOSURE as u8, function_idx as u8);
             for upvalue in self.upvalues {
-                enclosing.emit_byte(if upvalue.is_local{ 0x1 } else { 0x0 });
+                enclosing.emit_byte(if upvalue.is_local { 0x1 } else { 0x0 });
                 enclosing.emit_byte(upvalue.idx as u8);
             }
         }
@@ -302,7 +302,7 @@ impl Compiler {
     fn create_constant(&mut self, value: Value) -> usize {
         match self.function.chunk.find_constant(&value) {
             Some(const_idx) => const_idx,
-            _ => self.function.chunk.add_constant(Rc::new(value)),
+            _ => self.function.chunk.add_constant(value),
         }
     }
 
@@ -817,7 +817,7 @@ impl Compiler {
         compiler.expect(TOKEN_LEFT_PAREN, "Expect '(' at start of function");
         match compiler.peek().kind {
             TOKEN_RIGHT_PAREN => {
-                compiler.next();
+                compiler.expect(TOKEN_RIGHT_PAREN, "Expect ')' at end of function");
             }
             _ => {
                 compiler.function.arity += 1;
@@ -850,7 +850,6 @@ pub fn compile(source: &str) -> Result<LoxFn, CompilerError> {
     }
     compiler.emit_byte(OP_RETURN as u8);
     if crate::debug() {
-        println!("{:?}", compiler.function.chunk);
         disassemble_chunk(&compiler.function.chunk, "Compiling Script Complete");
     }
 
@@ -873,11 +872,11 @@ mod tests {
             code: vec![1, 0, 1, 1, 1, 2, 4, 1, 3, 6, 1, 4, 5, 3, 2, 14, 0],
             lines: vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             constant_pool: vec![
-                Rc::new(Value::Number(5.0)),
-                Rc::new(Value::Number(15.0)),
-                Rc::new(Value::Number(3.0)),
-                Rc::new(Value::Number(4.0)),
-                Rc::new(Value::Number(2.0)),
+                Value::Number(5.0),
+                Value::Number(15.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
+                Value::Number(2.0),
             ],
         };
         assert_eq!(fun.chunk, res);

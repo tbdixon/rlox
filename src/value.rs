@@ -1,18 +1,28 @@
 use crate::chunk::Chunk;
 use std::fmt;
-use std::rc::Rc;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct LoxClosure {
-    pub func: Rc<LoxFn>,
+    pub func: *const LoxFn,
+    pub upvalues: Vec<*mut Value>,
 }
-impl fmt::Display for LoxClosure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.func)
+
+impl LoxClosure {
+    pub fn new(func: *const LoxFn) -> Self {
+        Self {
+            func,
+            upvalues: Vec::with_capacity(u8::MAX as usize),
+        }
     }
 }
 
-#[derive(PartialEq)]
+impl fmt::Display for LoxClosure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        unsafe { write!(f, "{:?}", (*self.func)) }
+    }
+}
+
+#[derive(PartialEq, Clone)]
 pub struct LoxFn {
     pub name: Option<String>,
     pub arity: u8,
@@ -42,10 +52,11 @@ impl fmt::Debug for LoxFn {
     }
 }
 
+#[derive(Clone)]
 pub struct NativeFn {
     pub name: String,
     pub arity: u8,
-    pub func: Box<dyn Fn(&[Rc<Value>]) -> Value>,
+    pub func: *const (),
 }
 impl fmt::Display for NativeFn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -68,15 +79,15 @@ pub enum FunctionType {
     SCRIPT,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     Bool(bool),
     Nil(),
     Number(f64),
     Str(String),
-    Function(Rc<LoxFn>),
+    Function(LoxFn),
+    Closure(LoxClosure),
     NativeFunction(NativeFn),
-    Closure(Rc<LoxClosure>),
 }
 
 impl fmt::Display for Value {
