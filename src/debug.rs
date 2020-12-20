@@ -85,7 +85,7 @@ pub fn closure_instruction(op_code: OpCode, chunk: &Chunk, mut offset: usize) ->
     let constant_addr: usize = chunk.code[offset] as usize;
     let constant_val = &chunk.constant_pool[constant_addr];
     debugln!("{:?} ({:#04X?})\t{:#04X?}\t{:?} ", op_code, binary_code, constant_addr, constant_val);
-    let function = match &**constant_val {
+    let function = match constant_val {
         Value::Function(f) => f,
         _ => panic!("Error debugging"),
     };

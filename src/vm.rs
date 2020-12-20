@@ -7,7 +7,6 @@ use crate::natives;
 use crate::value::{LoxClosure, LoxFn, NativeFn, Value};
 use std::collections::HashMap;
 use std::mem::discriminant;
-use std::rc::Rc;
 
 type Result<T> = std::result::Result<T, InterpretResult>;
 
@@ -38,9 +37,9 @@ impl From<crate::compiler::CompilerError> for InterpretResult {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub struct CallFrame {
-    closure: Rc<LoxClosure>,
+    closure: LoxClosure,
     slot: usize,
     ip: usize,
 }
@@ -58,8 +57,8 @@ const MAX_FRAME_COUNT: usize = 64;
 const STACK_SIZE: usize = MAX_FRAME_COUNT * 256;
 pub struct VM {
     frames: Vec<CallFrame>,
-    stack: Vec<Rc<Value>>,
-    globals: HashMap<String, Rc<Value>>,
+    stack: Vec<Value>,
+    globals: HashMap<String, Value>,
 }
 
 // Two functions to use as pointers for comparisions to avoid some duplication later.
@@ -81,19 +80,19 @@ impl VM {
         vm.define_native(NativeFn {
             name: "clock".to_string(),
             arity: 0,
-            func: Box::new(&natives::clock),
+            func: natives::clock as *const (),
         })
         .unwrap();
         vm.define_native(NativeFn {
             name: "println".to_string(),
             arity: 1,
-            func: Box::new(&natives::println),
+            func: natives::println as *const (),
         })
         .unwrap();
         vm.define_native(NativeFn {
             name: "print".to_string(),
             arity: 1,
-            func: Box::new(&natives::print),
+            func: natives::print as *const (),
         })
         .unwrap();
         vm
@@ -102,12 +101,16 @@ impl VM {
     // A number of functions that help with the indirection around a vector of stacks to ensure
     // consistent handling of Option / Results and be granular with mutable and immutable borrows
     // going into the functions as required.
+    fn peek(&self) -> Result<&Value> {
+        self.stack.last().ok_or_else(|| INTERPRET_RUNTIME_ERROR("Invalid assigment"))
+    }
+
     fn ip(&self) -> Result<usize> {
         Ok(self.frames.last().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.ip)
     }
 
     fn chunk(&self) -> Result<&Chunk> {
-        Ok(&self.frames.last().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.closure.func.chunk)
+        unsafe { Ok(&(*self.frames.last().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.closure.func).chunk) }
     }
 
     fn increment_ip(&mut self) -> Result<()> {
@@ -125,12 +128,16 @@ impl VM {
         Ok(())
     }
 
-    fn get_constant(&self, constant_addr: usize) -> Result<Rc<Value>> {
-        Ok(self.chunk()?.constant_pool[constant_addr].clone())
+    fn get_constant(&self, constant_addr: usize) -> Result<&Value> {
+        Ok(&self.chunk()?.constant_pool[constant_addr])
     }
 
     fn frame_slot(&self) -> Result<usize> {
         Ok(self.frames.last().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.slot)
+    }
+
+    fn frame_closure(&mut self) -> Result<&mut LoxClosure> {
+        Ok(&mut self.frames.last_mut().ok_or(INTERPRET_RUNTIME_ERROR("Empty frame stack"))?.closure)
     }
 
     #[allow(dead_code)]
@@ -177,23 +184,29 @@ impl VM {
     fn setup_call(&mut self) -> Result<InterpretResult> {
         let arg_count = self.read_byte()? as usize;
         let function_idx = self.stack.len() - arg_count - 1;
-        let function = self.stack[function_idx].clone();
-        match &*function {
-            Value::Closure(c) => {
-                let f = &c.func;
-                if f.arity != arg_count as u8 {
-                    println!("Expected {} arguments in {} but got {}", f.arity, f, arg_count);
+        let function = std::mem::replace(&mut self.stack[function_idx], Value::Str("tmp".to_string()));
+        match function {
+            Value::Closure(c) => unsafe {
+                let _ = std::mem::replace(
+                    &mut self.stack[function_idx],
+                    Value::Str((*c.func).name.as_ref().unwrap_or(&"<script>".to_string()).to_string()),
+                );
+                if (*c.func).arity != arg_count as u8 {
+                    println!("Expected {} arguments in {} but got {}", (*c.func).arity, (*c.func), arg_count);
                     return Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"));
                 } else {
-                    self.call(c.clone(), function_idx)
+                    self.call(c, function_idx)
                 }
-            }
+            },
             Value::NativeFunction(f) => {
                 let arg_start = function_idx + 1;
-                let func = &f.func;
-                let result = func(&self.stack[arg_start..]);
-                self.stack.truncate(function_idx);
-                self.stack.push(Rc::new(result));
+                unsafe {
+                    let _ = std::mem::replace(&mut self.stack[function_idx], Value::Str(f.name));
+                    let func = std::mem::transmute::<*const (), fn(&[Value]) -> Value>(f.func);
+                    let result = func(&self.stack[arg_start..]);
+                    self.stack.truncate(function_idx);
+                    self.stack.push(result);
+                }
                 Ok(INTERPRET_OK)
             }
             _ => Err(INTERPRET_RUNTIME_ERROR("Unable to find function definition")),
@@ -214,7 +227,7 @@ impl VM {
         Ok(INTERPRET_OK)
     }
 
-    fn call(&mut self, closure: Rc<LoxClosure>, slot: usize) -> Result<InterpretResult> {
+    fn call(&mut self, closure: LoxClosure, slot: usize) -> Result<InterpretResult> {
         if self.frames.len() == 255 {
             return Err(INTERPRET_RUNTIME_ERROR("Stack overflow"));
         }
@@ -223,8 +236,23 @@ impl VM {
         Ok(INTERPRET_OK)
     }
 
-    fn make_closure(&mut self, func: Rc<LoxFn>) -> Result<Rc<LoxClosure>> {
-        Ok(Rc::new(LoxClosure { func }))
+    fn make_closure(&mut self, func: *const LoxFn) -> Result<LoxClosure> {
+        unsafe {
+            let upvalue_count = (*func).upvalue_count;
+            let mut closure = LoxClosure::new(func);
+            for _ in 0..upvalue_count {
+                let is_local = self.read_byte()?;
+                let idx = self.read_byte()?;
+                let upvalue: *mut Value = if is_local == 0x1 {
+                    let slot = self.frame_slot()? + idx as usize;
+                    &mut self.stack[slot]
+                } else {
+                    self.frame_closure()?.upvalues[idx as usize]
+                };
+                closure.upvalues.push(upvalue);
+            }
+            Ok(closure)
+        }
     }
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
@@ -240,11 +268,11 @@ impl VM {
     fn binary_add(&mut self) -> Result<InterpretResult> {
         let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow binary add"))?;
         let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow binary add"))?;
-        match (&*left, &*right) {
-            (Value::Number(left), Value::Number(right)) => self.stack.push(Rc::new(Value::Number(left + right))),
+        match (left, right) {
+            (Value::Number(left), Value::Number(right)) => self.stack.push(Value::Number(left + right)),
             (Value::Str(left), Value::Str(right)) => {
-                let new_string = left.clone() + right;
-                self.stack.push(Rc::new(Value::Str(new_string)))
+                let new_string = left + &right;
+                self.stack.push(Value::Str(new_string))
             }
             (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
         };
@@ -254,8 +282,8 @@ impl VM {
     fn binary(&mut self, operator: &dyn Fn(f64, f64) -> f64) -> Result<InterpretResult> {
         let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow binary"))?;
         let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow binary"))?;
-        match (&*left, &*right) {
-            (Value::Number(left), Value::Number(right)) => self.stack.push(Rc::new(Value::Number(operator(*left, *right)))),
+        match (left, right) {
+            (Value::Number(left), Value::Number(right)) => self.stack.push(Value::Number(operator(left, right))),
             (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
         };
         Ok(INTERPRET_OK)
@@ -263,8 +291,8 @@ impl VM {
 
     fn negate(&mut self) -> Result<InterpretResult> {
         let val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow negate"))?;
-        match *val {
-            Value::Number(val) => self.stack.push(Rc::new(Value::Number(-val))),
+        match val {
+            Value::Number(val) => self.stack.push(Value::Number(-val)),
             Value::Nil() => self.stack.push(val),
             _ => return Err(INTERPRET_RUNTIME_ERROR("Operator must be a number.")),
         };
@@ -273,29 +301,29 @@ impl VM {
 
     fn not(&mut self) -> Result<InterpretResult> {
         let val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow not"))?;
-        self.push(match *val {
-            Value::Nil() => Rc::new(Value::Bool(true)),
-            Value::Bool(bool) => Rc::new(Value::Bool(!bool)),
-            _ => Rc::new(Value::Bool(false)),
+        self.push(match val {
+            Value::Nil() => Value::Bool(true),
+            Value::Bool(bool) => Value::Bool(!bool),
+            _ => Value::Bool(false),
         })
     }
 
     fn equal(&mut self) -> Result<InterpretResult> {
         let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow equal"))?;
         let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow equal"))?;
-        self.push(Rc::new(Value::Bool(discriminant(&left) == discriminant(&right) && left == right)))
+        self.push(Value::Bool(discriminant(&left) == discriminant(&right) && left == right))
     }
 
     fn cmp(&mut self, op: &dyn Fn(f64, f64) -> bool) -> Result<InterpretResult> {
         let right = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow cmp"))?;
         let left = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow cmp"))?;
-        match (&*left, &*right) {
-            (Value::Number(left), Value::Number(right)) => self.push(Rc::new(Value::Bool(op(*left, *right)))),
+        match (left, right) {
+            (Value::Number(left), Value::Number(right)) => self.push(Value::Bool(op(left, right))),
             _ => return Err(INTERPRET_RUNTIME_ERROR("Comparison operands must be numbers.")),
         }
     }
 
-    fn push(&mut self, val: Rc<Value>) -> Result<InterpretResult> {
+    fn push(&mut self, val: Value) -> Result<InterpretResult> {
         self.stack.push(val);
         Ok(INTERPRET_OK)
     }
@@ -308,7 +336,7 @@ impl VM {
     fn get_variable_name(&mut self) -> Result<String> {
         let constant_addr: usize = self.read_byte()? as usize;
         let constant = &self.get_constant(constant_addr)?;
-        match &**constant {
+        match constant {
             Value::Str(v) => Ok(v.clone()),
             _ => Err(INTERPRET_RUNTIME_ERROR("Variable name must be a Str")),
         }
@@ -334,7 +362,7 @@ impl VM {
     fn define_native(&mut self, function: NativeFn) -> Result<InterpretResult> {
         let name = function.name.to_string();
         let native = Value::NativeFunction(function);
-        self.globals.insert(name, Rc::new(native));
+        self.globals.insert(name, native);
         Ok(INTERPRET_OK)
     }
 
@@ -342,7 +370,6 @@ impl VM {
         let var_name = self.get_variable_name()?;
         // Peek the value off since assignment is an expression so it should leave the expression
         // output (the assignment value) on the stack.
-        //
         // a = b = 5
         let val = self.stack.last().ok_or_else(|| INTERPRET_RUNTIME_ERROR("Invalid assigment"))?;
         if self.globals.contains_key(&var_name) {
@@ -354,11 +381,23 @@ impl VM {
     }
 
     fn get_upvalue(&mut self) -> Result<InterpretResult> {
-        unimplemented!();
+        let upvalue_idx = self.read_byte()? as usize;
+        let upvalues = &self.frame_closure()?.upvalues;
+        unsafe {
+            let v = (*upvalues[upvalue_idx]).clone();
+            self.stack.push(v);
+        }
+        Ok(INTERPRET_OK)
     }
 
     fn set_upvalue(&mut self) -> Result<InterpretResult> {
-        unimplemented!();
+        let new_val = self.peek()?.clone();
+        let upvalue_idx = self.read_byte()? as usize;
+        let upvalues = &mut self.frame_closure()?.upvalues;
+        unsafe{
+            let _ = std::ptr::replace(upvalues[upvalue_idx], new_val);
+        }
+        Ok(INTERPRET_OK)
     }
 
     // Pulls the two bytes that make up the 16 bit jump offset and return this
@@ -372,7 +411,7 @@ impl VM {
     // Definition of 'false' in rlox world
     fn is_falsey(&self) -> Result<bool> {
         let val = self.stack.last().ok_or(INTERPRET_RUNTIME_ERROR("Empty stack"))?;
-        match **val {
+        match val {
             Value::Bool(b) if !b => Ok(true),
             Value::Nil() => Ok(true),
             _ => Ok(false),
@@ -381,10 +420,9 @@ impl VM {
 
     // Main entry point into the VM -- compile and run.
     pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
-        let closure = Rc::new(LoxClosure {
-            func: Rc::new(compile(source)?),
-        });
-        self.stack.push(Rc::new(Value::Str(String::from("script"))));
+        let compiled_source = compile(source)?;
+        let closure = LoxClosure::new(&compiled_source);
+        self.stack.push(Value::Str(String::from("script")));
         self.call(closure, 0)?;
         match self.run() {
             Ok(_) => Ok(INTERPRET_OK),
@@ -415,9 +453,9 @@ impl VM {
                 OP_MULTIPLY => self.binary(&std::ops::Mul::mul),
                 OP_SUBTRACT => self.binary(&std::ops::Sub::sub),
                 OP_DIVIDE => self.binary(&std::ops::Div::div),
-                OP_NIL => self.push(Rc::new(Value::Nil())),
-                OP_TRUE => self.push(Rc::new(Value::Bool(true))),
-                OP_FALSE => self.push(Rc::new(Value::Bool(false))),
+                OP_NIL => self.push(Value::Nil()),
+                OP_TRUE => self.push(Value::Bool(true)),
+                OP_FALSE => self.push(Value::Bool(false)),
                 OP_NOT => self.not(),
                 OP_EQUAL => self.equal(),
                 OP_GREATER => self.cmp(&gt),
@@ -437,17 +475,17 @@ impl VM {
                     let func_addr: usize = self.read_byte()? as usize;
                     let func = self.get_constant(func_addr)?;
                     let func = match &*func {
-                        Value::Function(f) => self.make_closure(f.clone())?,
+                        Value::Function(f) => self.make_closure(f as *const LoxFn)?,
                         _ => return Err(INTERPRET_RUNTIME_ERROR("Invalid closure argument, function required")),
                     };
-                    self.stack.push(Rc::new(Value::Closure(func)));
+                    self.stack.push(Value::Closure(func));
                     Ok(INTERPRET_OK)
                 }
                 OP_CONSTANT => {
                     // Puts a constant defined in the code chunk constant pool onto the stack
                     let constant_addr: usize = self.read_byte()? as usize;
-                    let constant = self.get_constant(constant_addr)?.clone();
-                    self.stack.push(constant);
+                    let constant = self.get_constant(constant_addr)?;
+                    self.stack.push(constant.clone());
                     Ok(INTERPRET_OK)
                 }
                 OP_GET_LOCAL => {
