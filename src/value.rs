@@ -2,9 +2,15 @@ use crate::chunk::Chunk;
 use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct Upvalue {
+    pub location: *mut Value,
+    pub closed: Option<Value>
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct LoxClosure {
     pub func: *const LoxFn,
-    pub upvalues: Vec<*mut Value>,
+    pub upvalues: Vec<*mut Upvalue>,
 }
 
 impl LoxClosure {
@@ -56,7 +62,7 @@ impl fmt::Debug for LoxFn {
 pub struct NativeFn {
     pub name: String,
     pub arity: u8,
-    pub func: *const (),
+    pub func: *const (), // *const () to enable derive(Clone). These need to be dyn Fn(&[Value]) -> Value
 }
 impl fmt::Display for NativeFn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -79,7 +85,7 @@ pub enum FunctionType {
     SCRIPT,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Bool(bool),
     Nil(),
@@ -88,6 +94,16 @@ pub enum Value {
     Function(LoxFn),
     Closure(LoxClosure),
     NativeFunction(NativeFn),
+}
+
+impl Value {
+    pub fn is_falsey(&self) -> bool {
+        match self {
+            Value::Bool(b) if !b => true,
+            Value::Nil() => true,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for Value {

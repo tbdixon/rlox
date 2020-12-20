@@ -176,10 +176,13 @@ impl Compiler {
             //  }
             // }
             match (*self.enclosing).resolve_local(token) {
-                Some(local_idx) => Some(self.add_upvalue(Upvalue {
-                    idx: local_idx,
-                    is_local: true,
-                })),
+                Some(local_idx) => {
+                    (*self.enclosing).locals[local_idx].is_captured = true;
+                    Some(self.add_upvalue(Upvalue {
+                        idx: local_idx,
+                        is_local: true,
+                    }))
+                }
                 None => (*self.enclosing).resolve_upvalue(token).map(|upvalue_idx| {
                     self.add_upvalue(Upvalue {
                         idx: upvalue_idx,
@@ -199,8 +202,13 @@ impl Compiler {
         let mut current = self.peek_local();
         while let Some(local) = current {
             if local.depth == self.depth {
+                let upval = local.is_captured;
                 self.pop_local().unwrap();
-                self.emit_byte(OP_POP as u8);
+                if upval {
+                    self.emit_byte(OP_CLOSE_UPVALUE as u8);
+                } else {
+                    self.emit_byte(OP_POP as u8);
+                }
                 current = self.peek_local();
             } else {
                 current = None
@@ -822,7 +830,7 @@ impl Compiler {
             _ => {
                 compiler.function.arity += 1;
                 compiler.parse_variable();
-                while compiler.peek().kind == TOKEN_COMMA {
+                while compiler.match_(TOKEN_COMMA) {
                     compiler.function.arity += 1;
                     compiler.parse_variable();
                 }
