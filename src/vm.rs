@@ -5,8 +5,8 @@ use crate::debug::disassemble_instruction;
 use crate::debugln;
 use crate::natives;
 use crate::value::{LoxClosure, LoxFn, NativeFn, Upvalue, Value};
-use std::collections::HashMap;
 use std::mem::discriminant;
+use fnv::FnvHashMap;
 
 type Result<T> = std::result::Result<T, InterpretResult>;
 
@@ -59,7 +59,7 @@ pub struct VM {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
     upvalues: Vec<Upvalue>,
-    globals: HashMap<String, Value>,
+    globals: FnvHashMap<String, Value>,
 }
 
 // Two functions to use as pointers for comparisions to avoid some duplication later.
@@ -77,7 +77,7 @@ impl VM {
             frames: Vec::with_capacity(MAX_FRAME_COUNT),
             stack: Vec::with_capacity(STACK_SIZE),
             upvalues: Vec::with_capacity(u8::MAX as usize),
-            globals: HashMap::new(),
+            globals: FnvHashMap::default(),
         };
         vm.define_native(NativeFn {
             name: "clock".to_string(),
@@ -200,8 +200,8 @@ impl VM {
     fn setup_call(&mut self) -> Result<InterpretResult> {
         let arg_count = self.read_byte()? as usize;
         let function_idx = self.stack.len() - arg_count - 1;
-        let function_name = self.stack[function_idx].to_string();
-        let function = std::mem::replace(&mut self.stack[function_idx], Value::Str(function_name));
+        //let function_name = self.stack[function_idx].to_string();
+        let function = std::mem::replace(&mut self.stack[function_idx], Value::Nil());
         match function {
             Value::Closure(c) => {
                 unsafe {

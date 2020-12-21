@@ -10,7 +10,7 @@ pub mod precedence;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-pub static mut DEBUG: bool = true;
+pub static mut DEBUG: bool = false;
 pub fn debug() -> bool {
     unsafe {
         DEBUG
