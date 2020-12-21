@@ -14,6 +14,7 @@ fn main() -> Result<()> {
             rlox::DEBUG = debug == "1";
         }
     }
+
     let args: Vec<String> = env::args().collect();
     // First arg is the binary name, if there are no other arguments run a REPL
     // If there is a single argument, parse that as the name of a Lox script
