@@ -365,11 +365,6 @@ impl VM {
         self.stack.push(val);
     }
 
-    fn print(&mut self) -> Result<InterpretResult> {
-        print!("{}", self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow print"))?);
-        Ok(INTERPRET_OK)
-    }
-
     fn get_variable_name(&self, addr: usize) -> &str {
         self.get_constant(addr).to_str()
     }
@@ -377,11 +372,11 @@ impl VM {
     fn get_global(&mut self) -> Result<InterpretResult> {
         let constant_addr: usize = self.read_byte() as usize;
         let var_name = self.get_variable_name(constant_addr);
-        let val = self
+        let val = *self
             .globals
             .get(var_name)
             .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Variable not defined"))?;
-        self.push(*val);
+        self.push(val);
         Ok(INTERPRET_OK)
     }
 
@@ -401,13 +396,13 @@ impl VM {
 
     fn set_global(&mut self) -> Result<InterpretResult> {
         let constant_addr: usize = self.read_byte() as usize;
-        let var_name = self.get_variable_name(constant_addr);
+        let var_name = self.get_variable_name(constant_addr).to_string();
         // Peek the value off since assignment is an expression so it should leave the expression
         // output (the assignment value) on the stack.
         // a = b = 5
-        let val = self.peek();
-        if self.globals.contains_key(var_name) {
-            self.globals.insert(var_name.to_string(), *val);
+        let val = *self.peek();
+        if self.globals.contains_key(&var_name) {
+            self.globals.insert(var_name, val);
             Ok(INTERPRET_OK)
         } else {
             Err(INTERPRET_RUNTIME_ERROR("Variable not definied"))
@@ -417,7 +412,7 @@ impl VM {
     fn closure_op(&mut self) -> Result<InterpretResult> {
         // Closure sets up a runtime representation of a LoxFn
         let func_addr: usize = self.read_byte() as usize;
-        let func = self.get_constant(func_addr);
+        let func = *self.get_constant(func_addr);
         let closure = self.make_closure(func.to_closure());
         self.push(Value::from(closure));
         Ok(INTERPRET_OK)
@@ -426,8 +421,8 @@ impl VM {
     fn constant(&mut self) -> Result<InterpretResult> {
         // Puts a constant defined in the code chunk constant pool onto the stack
         let constant_addr: usize = self.read_byte() as usize;
-        let constant = self.get_constant(constant_addr);
-        self.push(*constant);
+        let constant = *self.get_constant(constant_addr);
+        self.push(constant);
         Ok(INTERPRET_OK)
     }
 
@@ -443,11 +438,11 @@ impl VM {
         // --------------^----------^
         //      frame_slot    frame_slot + 2
         let local_index: usize = self.read_byte() as usize;
-        let val = self
+        let val = *self
             .stack
             .get(self.slot() + local_index)
             .ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow getting local"))?;
-        self.push(*val);
+        self.push(val);
         Ok(INTERPRET_OK)
     }
 
