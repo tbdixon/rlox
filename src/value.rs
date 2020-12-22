@@ -1,10 +1,13 @@
+#![feature(alloc, heap_api)]
 use crate::chunk::Chunk;
+use std::alloc::{alloc, Layout};
 use std::fmt;
+use std::ptr;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Upvalue {
     pub location: usize,
-    pub closed: Option<Value>
+    pub closed: Option<Value>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -85,15 +88,23 @@ pub enum FunctionType {
     SCRIPT,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Value {
     Bool(bool),
     Nil(),
     Number(f64),
-    Str(String),
-    Function(LoxFn),
-    Closure(LoxClosure),
-    NativeFunction(NativeFn),
+    Str(*mut String),
+    Function(*mut LoxFn),
+    Closure(*mut LoxClosure),
+    NativeFunction(*mut NativeFn),
+}
+
+pub fn value_ptr<T>(val: T) -> *mut T {
+    unsafe {
+        let ptr = alloc(Layout::new::<T>()) as *mut T;
+        ptr::write(ptr, val);
+        ptr
+    }
 }
 
 impl Value {
@@ -108,14 +119,16 @@ impl Value {
 
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        unsafe{
         match self {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Nil() => write!(f, "nil"),
             Value::Number(n) => write!(f, "{}", n),
-            Value::Str(s) => write!(f, "{}", s),
-            Value::Function(s) => write!(f, "{}", s),
-            Value::NativeFunction(s) => write!(f, "{}", s),
-            Value::Closure(s) => write!(f, "{}", s),
+            Value::Str(s) => write!(f, "{}", **s),
+            Value::Function(s) => write!(f, "{}", **s),
+            Value::NativeFunction(s) => write!(f, "{}", **s),
+            Value::Closure(s) => write!(f, "{}", **s),
+        }
         }
     }
 }

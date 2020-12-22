@@ -5,7 +5,7 @@ use crate::precedence::Precedence;
 use crate::precedence::Precedence::*;
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token, TokenStream};
-use crate::value::{LoxFn, Value};
+use crate::value::{LoxFn, Value, value_ptr};
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
@@ -90,7 +90,7 @@ impl Compiler {
         }
         unsafe {
             let enclosing = &mut *self.enclosing;
-            let function_idx = enclosing.create_constant(Value::Function(self.function));
+            let function_idx = enclosing.create_constant(Value::Function(value_ptr(self.function)));
             enclosing.emit_bytes(OP_CLOSURE as u8, function_idx as u8);
             for upvalue in self.upvalues {
                 enclosing.emit_byte(if upvalue.is_local { 0x1 } else { 0x0 });
@@ -748,7 +748,7 @@ impl Compiler {
                 }
                 None => {
                     let identifier = identifier.lexeme.to_string();
-                    arg = self.create_constant(Value::Str(identifier));
+                    arg = self.create_constant(Value::Str(value_ptr(identifier)));
                     op_set = OP_SET_GLOBAL;
                     op_get = OP_GET_GLOBAL;
                 }
@@ -773,7 +773,7 @@ impl Compiler {
         let lexeme = &self.next().lexeme;
         // Trim the leading and trailing " from the lexeme
         let string = String::from(&lexeme[1..lexeme.len() - 1]);
-        let const_idx = self.create_constant(Value::Str(string));
+        let const_idx = self.create_constant(Value::Str(value_ptr(string)));
         self.emit_read_constant(const_idx);
     }
 
@@ -793,7 +793,7 @@ impl Compiler {
         self.expect(TOKEN_IDENTIFIER, "Expect variable name");
         let variable_name = variable.lexeme.to_string();
         if self.depth == 0 {
-            let const_idx = self.create_constant(Value::Str(variable_name));
+            let const_idx = self.create_constant(Value::Str(value_ptr(variable_name)));
             self.emit_read_constant(const_idx);
             const_idx
         } else {

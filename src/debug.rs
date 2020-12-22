@@ -91,12 +91,14 @@ pub fn closure_instruction(op_code: OpCode, chunk: &Chunk, mut offset: usize) ->
         _ => panic!("Error debugging"),
     };
     offset += 2;
-    for _ in 0..function.upvalue_count {
-        debug!("{:04}\t\t", offset);
-        let upval_type = if chunk.code[offset - 1] == 0x1 { "local" } else { "upvalue" };
-        let upval_idx = chunk.code[offset];
-        debugln!("|\t\t\t\t{}\t{} ", upval_type, upval_idx);
-        offset += 2;
+    unsafe {
+        for _ in 0..(**function).upvalue_count {
+            debug!("{:04}\t\t", offset);
+            let upval_type = if chunk.code[offset - 1] == 0x1 { "local" } else { "upvalue" };
+            let upval_idx = chunk.code[offset];
+            debugln!("|\t\t\t\t{}\t{} ", upval_type, upval_idx);
+            offset += 2;
+        }
     }
     offset
 }
