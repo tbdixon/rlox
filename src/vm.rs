@@ -4,7 +4,7 @@ use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
 use crate::natives;
-use crate::value::{value_ptr, LoxClosure, LoxFn, NativeFn, Upvalue, Value};
+use crate::value::{LoxClosure, NativeFn, Upvalue, Value};
 use std::collections::BTreeMap;
 use std::mem::discriminant;
 
@@ -38,8 +38,9 @@ impl From<crate::compiler::CompilerError> for InterpretResult {
 }
 
 #[derive(Debug, PartialEq)]
+//TODO closure can likely be a & reference
 pub struct CallFrame {
-    closure: *mut LoxClosure,
+    closure: *const LoxClosure,
     slot: usize,
     ip: usize,
 }
@@ -82,19 +83,19 @@ impl VM {
         vm.define_native(NativeFn {
             name: "clock".to_string(),
             arity: 0,
-            func: natives::clock as *const (),
+            func: Box::new(natives::clock),
         })
         .unwrap();
         vm.define_native(NativeFn {
             name: "println".to_string(),
             arity: 1,
-            func: natives::println as *const (),
+            func: Box::new(natives::println),
         })
         .unwrap();
         vm.define_native(NativeFn {
             name: "print".to_string(),
             arity: 1,
-            func: natives::print as *const (),
+            func: Box::new(natives::print),
         })
         .unwrap();
         vm
@@ -136,7 +137,7 @@ impl VM {
 
     #[inline]
     fn chunk(&self) -> &Chunk {
-        unsafe { &(*(*self.frames.last().unwrap().closure).func).chunk }
+        unsafe { &(*self.frames.last().unwrap().closure).chunk() }
     }
 
     #[inline]
@@ -150,7 +151,7 @@ impl VM {
     }
 
     #[inline]
-    fn closure(&mut self) -> *mut LoxClosure {
+    fn closure(&mut self) -> *const LoxClosure {
         self.frames.last_mut().unwrap().closure
     }
 
@@ -206,25 +207,18 @@ impl VM {
         let function_idx = self.stack.len() - arg_count - 1;
         let function = self.stack[function_idx];
         match function {
-            Value::Closure(c) => {
-                unsafe {
-                    let inner_fn = &*(*c).func;
-                    let arity = inner_fn.arity;
-                    if arity != arg_count as u8 {
-                        println!("Expected {} arguments in {} but got {}", arity, inner_fn, arg_count);
-                        return Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"));
-                    }
+            Value::Closure(_) => {
+                if function.arity() != arg_count as u8 {
+                    println!("Expected {} arguments in {} but got {}", function.arity(), function, arg_count);
+                    return Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"));
                 }
-                self.call(c, function_idx)
+                self.call(function.closure(), function_idx)
             }
-            Value::NativeFunction(f) => {
+            Value::NativeFunction(_) => {
                 let arg_start = function_idx + 1;
-                unsafe {
-                    let func = std::mem::transmute::<*const (), fn(&[Value]) -> Value>((*f).func);
-                    let result = func(&self.stack[arg_start..]);
-                    self.stack.truncate(function_idx);
-                    self.push(result);
-                }
+                let result = (function.native())(&self.stack[arg_start..]);
+                self.stack.truncate(function_idx);
+                self.push(result);
                 Ok(INTERPRET_OK)
             }
             _ => Err(INTERPRET_RUNTIME_ERROR("Unable to find function definition")),
@@ -245,11 +239,15 @@ impl VM {
         Ok(INTERPRET_OK)
     }
 
-    fn call(&mut self, closure: *mut LoxClosure, slot: usize) -> Result<InterpretResult> {
+    fn call(&mut self, closure: &LoxClosure, slot: usize) -> Result<InterpretResult> {
         if self.frames.len() == 255 {
             return Err(INTERPRET_RUNTIME_ERROR("Stack overflow"));
         }
-        let frame = CallFrame { closure, slot, ip: 0 };
+        let frame = CallFrame {
+            closure: closure as *const LoxClosure,
+            slot,
+            ip: 0,
+        };
         self.frames.push(frame);
         Ok(INTERPRET_OK)
     }
@@ -273,27 +271,23 @@ impl VM {
             }
         }
         self.upvalues.push(Upvalue { location, closed: None });
-        let len = self.upvalues.len() - 1;
-        &mut self.upvalues[len]
+        let idx = self.upvalues.len() - 1;
+        &mut self.upvalues[idx]
     }
 
-    fn make_closure(&mut self, func: *const LoxFn) -> *mut LoxClosure {
-        unsafe {
-            let upvalue_count = (*func).upvalue_count;
-            let mut closure = LoxClosure::new(func);
-            for _ in 0..upvalue_count {
-                let is_local = self.read_byte();
-                let idx = self.read_byte();
-                let upvalue: *mut Upvalue = if is_local == 0x1 {
-                    let location = self.slot() + idx as usize;
-                    self.capture_upvalue(location)
-                } else {
-                    (*self.closure()).upvalues[idx as usize]
-                };
-                closure.upvalues.push(upvalue);
-            }
-            value_ptr(closure)
+    fn make_closure(&mut self, mut closure: LoxClosure) -> LoxClosure {
+        for _ in 0..closure.upvalue_count() {
+            let is_local = self.read_byte();
+            let idx = self.read_byte();
+            let upvalue: *mut Upvalue = if is_local == 0x1 {
+                let location = self.slot() + idx as usize;
+                self.capture_upvalue(location)
+            } else {
+                unsafe { (*self.closure()).get_upvalue(idx as usize) }
+            };
+            closure.upvalues.push(upvalue);
         }
+        closure
     }
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
@@ -313,10 +307,7 @@ impl VM {
         let left = self.pop();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => self.push(Value::Number(left + right)),
-            (Value::Str(left), Value::Str(right)) => {
-                //TODO Fix string concat again...
-                self.push(Value::Str(value_ptr("ABC".to_string())))
-            }
+            (Value::Str(_), Value::Str(_)) => self.push(Value::from(left.to_string() + right.to_str())),
             (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
         };
         Ok(INTERPRET_OK)
@@ -379,24 +370,18 @@ impl VM {
         Ok(INTERPRET_OK)
     }
 
-    fn get_variable_name(&self, addr: usize) -> *mut String {
-        let constant = &self.get_constant(addr);
-        match constant {
-            Value::Str(v) => *v,
-            _ => unreachable!(),
-        }
+    fn get_variable_name(&self, addr: usize) -> &str {
+        self.get_constant(addr).to_str()
     }
 
     fn get_global(&mut self) -> Result<InterpretResult> {
         let constant_addr: usize = self.read_byte() as usize;
         let var_name = self.get_variable_name(constant_addr);
-        unsafe {
-            let val = self
-                .globals
-                .get(&*var_name)
-                .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Variable not defined"))?;
-            self.push(*val);
-        }
+        let val = self
+            .globals
+            .get(var_name)
+            .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Variable not defined"))?;
+        self.push(*val);
         Ok(INTERPRET_OK)
     }
 
@@ -409,25 +394,23 @@ impl VM {
 
     fn define_native(&mut self, function: NativeFn) -> Result<InterpretResult> {
         let name = function.name.to_string();
-        let native = Value::NativeFunction(value_ptr(function));
+        let native = Value::from(function);
         self.globals.insert(name, native);
         Ok(INTERPRET_OK)
     }
 
     fn set_global(&mut self) -> Result<InterpretResult> {
         let constant_addr: usize = self.read_byte() as usize;
-        unsafe {
-            let var_name = (&*self.get_variable_name(constant_addr)).clone();
-            // Peek the value off since assignment is an expression so it should leave the expression
-            // output (the assignment value) on the stack.
-            // a = b = 5
-            let val = self.peek();
-            if self.globals.contains_key(&*var_name) {
-                self.globals.insert(var_name, *val);
-                Ok(INTERPRET_OK)
-            } else {
-                Err(INTERPRET_RUNTIME_ERROR("Variable not definied"))
-            }
+        let var_name = self.get_variable_name(constant_addr);
+        // Peek the value off since assignment is an expression so it should leave the expression
+        // output (the assignment value) on the stack.
+        // a = b = 5
+        let val = self.peek();
+        if self.globals.contains_key(var_name) {
+            self.globals.insert(var_name.to_string(), *val);
+            Ok(INTERPRET_OK)
+        } else {
+            Err(INTERPRET_RUNTIME_ERROR("Variable not definied"))
         }
     }
 
@@ -435,14 +418,8 @@ impl VM {
         // Closure sets up a runtime representation of a LoxFn
         let func_addr: usize = self.read_byte() as usize;
         let func = self.get_constant(func_addr);
-        let func = match func {
-            Value::Function(f) => {
-                let f = *f as *const LoxFn;
-                self.make_closure(f)
-            }
-            _ => unreachable!(),
-        };
-        self.push(Value::Closure(func));
+        let closure = self.make_closure(func.to_closure());
+        self.push(Value::from(closure));
         Ok(INTERPRET_OK)
     }
 
@@ -563,9 +540,9 @@ impl VM {
     // Main entry point into the VM -- compile and run.
     pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
         let compiled_source = compile(source)?;
-        let closure = &LoxClosure::new(&compiled_source) as *const _ as *mut LoxClosure;
-        self.push(Value::Str(value_ptr(String::from("script"))));
-        self.call(closure, 0)?;
+        let closure = LoxClosure::new(&compiled_source);
+        self.push(Value::from(String::from("script")));
+        self.call(&closure, 0)?;
         match self.run() {
             Ok(_) => Ok(INTERPRET_OK),
             Err(e) => {

@@ -1,4 +1,3 @@
-#![feature(alloc, heap_api)]
 use crate::chunk::Chunk;
 use std::alloc::{alloc, Layout};
 use std::fmt;
@@ -9,13 +8,12 @@ pub struct Upvalue {
     pub location: usize,
     pub closed: Option<Value>,
 }
-
+/*---------------------------------------------------------------------*/
 #[derive(Debug, PartialEq, Clone)]
 pub struct LoxClosure {
     pub func: *const LoxFn,
     pub upvalues: Vec<*mut Upvalue>,
 }
-
 impl LoxClosure {
     pub fn new(func: *const LoxFn) -> Self {
         Self {
@@ -23,14 +21,28 @@ impl LoxClosure {
             upvalues: Vec::with_capacity(u8::MAX as usize),
         }
     }
-}
 
+    pub fn get_upvalue(&self, idx: usize) -> *mut Upvalue {
+        self.upvalues[idx]
+    }
+
+    pub fn add_upvalue(&mut self, upvalue: *mut Upvalue) {
+        self.upvalues.push(upvalue);
+    }
+
+    pub fn upvalue_count(&self) -> u8 {
+        unsafe { (*self.func).upvalue_count }
+    }
+    pub fn chunk(&self) -> &Chunk {
+        unsafe { &(*self.func).chunk }
+    }
+}
 impl fmt::Display for LoxClosure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         unsafe { write!(f, "{:?}", (*self.func)) }
     }
 }
-
+/*---------------------------------------------------------------------*/
 #[derive(PartialEq, Clone)]
 pub struct LoxFn {
     pub name: Option<String>,
@@ -60,13 +72,13 @@ impl fmt::Debug for LoxFn {
         write!(f, "LoxFn *{}", self)
     }
 }
-
-#[derive(Clone)]
+/*---------------------------------------------------------------------*/
 pub struct NativeFn {
     pub name: String,
     pub arity: u8,
-    pub func: *const (), // *const () to enable derive(Clone). These need to be dyn Fn(&[Value]) -> Value
+    pub func: Box<dyn Fn(&[Value]) -> Value>,
 }
+
 impl fmt::Display for NativeFn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "<fn {}>", &self.name)
@@ -82,28 +94,127 @@ impl PartialEq for NativeFn {
         self.name == other.name && self.arity == other.arity
     }
 }
-
-pub enum FunctionType {
-    FUNCTION,
-    SCRIPT,
-}
+/*---------------------------------------------------------------------*/
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Value {
     Bool(bool),
     Nil(),
     Number(f64),
-    Str(*mut String),
-    Function(*mut LoxFn),
-    Closure(*mut LoxClosure),
-    NativeFunction(*mut NativeFn),
+    Str(ValuePtr<String>),
+    Function(ValuePtr<LoxFn>),
+    Closure(ValuePtr<LoxClosure>),
+    NativeFunction(ValuePtr<NativeFn>),
 }
 
-pub fn value_ptr<T>(val: T) -> *mut T {
-    unsafe {
-        let ptr = alloc(Layout::new::<T>()) as *mut T;
-        ptr::write(ptr, val);
-        ptr
+impl Value {
+    pub fn to_str(&self) -> &str {
+        match self {
+            Value::Str(p) => unsafe { &*p.ptr },
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            Value::Str(p) => unsafe { (*p.ptr).to_string() },
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn function(&self) -> *const LoxFn {
+        match self {
+            Value::Closure(p) => unsafe { (*p.ptr).func },
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn closure(&self) -> &LoxClosure {
+        match self {
+            Value::Closure(p) => unsafe { &*p.ptr },
+            _ => unreachable!(),
+        }
+    }
+
+
+    pub fn native(&self) -> &Box<dyn Fn(&[Value]) -> Value> {
+        match self {
+            Value::NativeFunction(p) => unsafe { &(*p.ptr).func },
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn upvalue_count(&self) -> u8 {
+        match self {
+            Value::Function(p) => unsafe { (*p.ptr).upvalue_count },
+            _ => unreachable!(),
+        }
+    }
+
+
+    pub fn arity(&self) -> u8 {
+        match self {
+            Value::Closure(_) => unsafe { (*self.function()).arity },
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn chunk(&self) -> &Chunk {
+        match self {
+            Value::Closure(_) => unsafe { &(*self.function()).chunk },
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn to_closure(&self) -> LoxClosure {
+        match self {
+            Value::Function(p) => LoxClosure::new(p.ptr),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::Str(ValuePtr::new(s))
+    }
+}
+impl From<LoxFn> for Value {
+    fn from(f: LoxFn) -> Self {
+        Value::Function(ValuePtr::new(f))
+    }
+}
+impl From<LoxClosure> for Value {
+    fn from(c: LoxClosure) -> Self {
+        Value::Closure(ValuePtr::new(c))
+    }
+}
+impl From<NativeFn> for Value {
+    fn from(f: NativeFn) -> Self {
+        Value::NativeFunction(ValuePtr::new(f))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ValuePtr<T> {
+    ptr: *mut T,
+}
+impl<T> Copy for ValuePtr<T> {}
+impl<T> Clone for ValuePtr<T> {
+    fn clone(&self) -> ValuePtr<T> {
+        *self
+    }
+}
+impl<T> ValuePtr<T> {
+    fn new(v: T) -> Self {
+        Self { ptr: ValuePtr::alloc(v) }
+    }
+    fn alloc(val: T) -> *mut T {
+        unsafe {
+            let ptr = alloc(Layout::new::<T>()) as *mut T;
+            ptr::write(ptr, val);
+            ptr
+        }
     }
 }
 
@@ -119,16 +230,16 @@ impl Value {
 
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unsafe{
-        match self {
-            Value::Bool(b) => write!(f, "{}", b),
-            Value::Nil() => write!(f, "nil"),
-            Value::Number(n) => write!(f, "{}", n),
-            Value::Str(s) => write!(f, "{}", **s),
-            Value::Function(s) => write!(f, "{}", **s),
-            Value::NativeFunction(s) => write!(f, "{}", **s),
-            Value::Closure(s) => write!(f, "{}", **s),
-        }
+        unsafe {
+            match self {
+                Value::Bool(b) => write!(f, "{}", b),
+                Value::Nil() => write!(f, "nil"),
+                Value::Number(n) => write!(f, "{}", n),
+                Value::Str(s) => write!(f, "{}", *s.ptr),
+                Value::Function(s) => write!(f, "{}", *s.ptr),
+                Value::NativeFunction(s) => write!(f, "{}", *s.ptr),
+                Value::Closure(s) => write!(f, "{}", *s.ptr),
+            }
         }
     }
 }

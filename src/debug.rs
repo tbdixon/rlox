@@ -86,19 +86,17 @@ pub fn closure_instruction(op_code: OpCode, chunk: &Chunk, mut offset: usize) ->
     let constant_addr: usize = chunk.code[offset] as usize;
     let constant_val = &chunk.constant_pool[constant_addr];
     debugln!("{:?} ({:#04X?})\t{:#04X?}\t{:?} ", op_code, binary_code, constant_addr, constant_val);
-    let function = match constant_val {
-        Value::Function(f) => f,
+    match constant_val {
+        Value::Function(_) => {}
         _ => panic!("Error debugging"),
     };
     offset += 2;
-    unsafe {
-        for _ in 0..(**function).upvalue_count {
-            debug!("{:04}\t\t", offset);
-            let upval_type = if chunk.code[offset - 1] == 0x1 { "local" } else { "upvalue" };
-            let upval_idx = chunk.code[offset];
-            debugln!("|\t\t\t\t{}\t{} ", upval_type, upval_idx);
-            offset += 2;
-        }
+    for _ in 0..constant_val.upvalue_count() {
+        debug!("{:04}\t\t", offset);
+        let upval_type = if chunk.code[offset - 1] == 0x1 { "local" } else { "upvalue" };
+        let upval_idx = chunk.code[offset];
+        debugln!("|\t\t\t\t{}\t{} ", upval_type, upval_idx);
+        offset += 2;
     }
     offset
 }
