@@ -6,14 +6,16 @@ use std::io;
 use std::io::prelude::*;
 
 fn main() -> Result<()> {
-    // Switch to set this via environment variables for quicker / cleaner toggling.
-    // Requires unsafe code due to DEBUG being a global mutable variable, but no risk 
-    // since this is only place it updates and reads are done through a function.
+    /* Don't read from environment variable in --release. This ensures that the global rlox::DEBUG
+     * is definitely false so compiler can get rid of all conditional checks (non-trivial cost with
+     * every loop of the core VM run function). */
+    #[cfg(debug_assertions)]
     if let Ok(debug) = env::var("RLOX_DEBUG") {
         unsafe{
             rlox::DEBUG = debug == "1";
         }
     }
+
 
     let args: Vec<String> = env::args().collect();
     // First arg is the binary name, if there are no other arguments run a REPL

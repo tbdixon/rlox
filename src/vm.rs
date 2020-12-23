@@ -3,6 +3,7 @@ use crate::chunk::OpCode::{self, *};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
+use crate::memory::LoxHeap;
 use crate::natives;
 use crate::value::{LoxClosure, NativeFn, Upvalue, Value};
 use std::collections::BTreeMap;
@@ -38,7 +39,6 @@ impl From<crate::compiler::CompilerError> for InterpretResult {
 }
 
 #[derive(Debug, PartialEq)]
-//TODO closure can likely be a & reference
 pub struct CallFrame {
     closure: *const LoxClosure,
     slot: usize,
@@ -61,6 +61,7 @@ pub struct VM {
     stack: Vec<Value>,
     upvalues: Vec<Upvalue>,
     globals: BTreeMap<String, Value>,
+    heap: LoxHeap,
 }
 
 // Two functions to use as pointers for comparisions to avoid some duplication later.
@@ -79,6 +80,7 @@ impl VM {
             stack: Vec::with_capacity(STACK_SIZE),
             upvalues: Vec::with_capacity(u8::MAX as usize),
             globals: BTreeMap::new(),
+            heap: LoxHeap::new(),
         };
         vm.define_native(NativeFn {
             name: "clock".to_string(),
@@ -307,7 +309,14 @@ impl VM {
         let left = self.pop();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => self.push(Value::Number(left + right)),
-            (Value::Str(_), Value::Str(_)) => self.push(Value::from(left.to_string() + right.to_str())),
+            (Value::Str(_), Value::Str(_)) => {
+                let val = self.heap.allocate(left.to_string() + right.to_str());
+                self.push(val);
+                if self.heap.oom() {
+                    self.mark_roots();
+                    self.heap.gc();
+                }
+            }
             (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
         };
         Ok(INTERPRET_OK)
@@ -414,7 +423,12 @@ impl VM {
         let func_addr: usize = self.read_byte() as usize;
         let func = *self.get_constant(func_addr);
         let closure = self.make_closure(func.to_closure());
-        self.push(Value::from(closure));
+        let closure = self.heap.allocate(closure);
+        self.push(closure);
+        if self.heap.oom() {
+            self.mark_roots();
+            self.heap.gc();
+        }
         Ok(INTERPRET_OK)
     }
 
@@ -552,7 +566,7 @@ impl VM {
         debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
         let mut status = INTERPRET_OK;
         while status == INTERPRET_OK {
-            if crate::debug() {
+            if crate::trace_execution() {
                 println!("-----------------------------------------------------------------");
                 println!("Stack top {}: {:?}", self.stack.len(), self.stack);
                 //self.print_globals();
@@ -597,5 +611,17 @@ impl VM {
             }?;
         }
         Ok(status)
+    }
+}
+
+impl VM {
+    fn mark_roots(&mut self) {
+        //frames: Vec<CallFrame>,
+        //upvalues: Vec<Upvalue>,
+        //globals: BTreeMap<String, Value>,
+        for val in &mut self.stack {
+            val.mark();
+            println!("marking {:?}", val);
+        }
     }
 }

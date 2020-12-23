@@ -1,11 +1,5 @@
-fun outer() {
-	println("Outer execution");
-	var x =  "Outer var x";
-	fun inner() {
-		println("Inner execution");
-		println(x);
-	}
-	return inner;
-}
-var closure = outer();
-closure();
+var a = "hello" + "World";
+println(a);
+var b = "bye" + "World";
+var c = a + b;
+println(c);

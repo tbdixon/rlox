@@ -48,6 +48,7 @@ pub struct LoxFn {
     pub arity: u8,
     pub upvalue_count: u8,
     pub chunk: Chunk,
+    pub marked: bool,
 }
 impl LoxFn {
     pub fn new() -> Self {
@@ -56,6 +57,7 @@ impl LoxFn {
             arity: 0,
             chunk: Chunk::new(),
             upvalue_count: 0,
+            marked: false,
         }
     }
 }
@@ -107,6 +109,14 @@ pub enum Value {
 }
 
 impl Value {
+    pub fn mark(&mut self) {
+         match self {
+            Value::Str(p) => p.mark(),
+            Value::Function(p) => p.mark(),
+            Value::Closure(p) => p.mark(),
+            _ => {}
+        }
+    }
     pub fn to_str(&self) -> &str {
         match self {
             Value::Str(p) => p.r#ref(),
@@ -179,7 +189,7 @@ impl Value {
     }
 }
 
-/* Direct methods to create heap allocated objects, these will not be tied to the 
+/* Direct methods to create heap allocated objects, these will not be tied to the
  * VM memory management and hence never garbage collected. For appropriate GC coverage
  * instantiate a LoxHeap struct and create values through those APIs*/
 impl From<String> for Value {
@@ -202,7 +212,6 @@ impl From<NativeFn> for Value {
         Value::NativeFunction(ValuePtr::new(f))
     }
 }
-
 impl From<LoxObject> for Value {
     fn from(obj: LoxObject) -> Self {
         match obj {
