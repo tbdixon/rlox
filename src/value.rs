@@ -1,7 +1,6 @@
 use crate::chunk::Chunk;
-use std::alloc::{alloc, Layout};
+use crate::memory::*;
 use std::fmt;
-use std::ptr;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Upvalue {
@@ -47,8 +46,8 @@ impl fmt::Display for LoxClosure {
 pub struct LoxFn {
     pub name: Option<String>,
     pub arity: u8,
-    pub chunk: Chunk,
     pub upvalue_count: u8,
+    pub chunk: Chunk,
 }
 impl LoxFn {
     pub fn new() -> Self {
@@ -110,47 +109,45 @@ pub enum Value {
 impl Value {
     pub fn to_str(&self) -> &str {
         match self {
-            Value::Str(p) => unsafe { &*p.ptr },
+            Value::Str(p) => p.r#ref(),
             _ => unreachable!(),
         }
     }
 
     pub fn to_string(&self) -> String {
         match self {
-            Value::Str(p) => unsafe { (*p.ptr).to_string() },
+            Value::Str(p) => p.r#ref().to_string(),
             _ => unreachable!(),
         }
     }
 
     pub fn function(&self) -> *const LoxFn {
         match self {
-            Value::Closure(p) => unsafe { (*p.ptr).func },
+            Value::Closure(p) => unsafe { (*p.ptr()).func },
             _ => unreachable!(),
         }
     }
 
     pub fn closure(&self) -> &LoxClosure {
         match self {
-            Value::Closure(p) => unsafe { &*p.ptr },
+            Value::Closure(p) => p.r#ref(),
             _ => unreachable!(),
         }
     }
 
-
     pub fn native(&self) -> &Box<dyn Fn(&[Value]) -> Value> {
         match self {
-            Value::NativeFunction(p) => unsafe { &(*p.ptr).func },
+            Value::NativeFunction(p) => &p.r#ref().func,
             _ => unreachable!(),
         }
     }
 
     pub fn upvalue_count(&self) -> u8 {
         match self {
-            Value::Function(p) => unsafe { (*p.ptr).upvalue_count },
+            Value::Function(p) => unsafe { (*p.ptr()).upvalue_count },
             _ => unreachable!(),
         }
     }
-
 
     pub fn arity(&self) -> u8 {
         match self {
@@ -168,12 +165,23 @@ impl Value {
 
     pub fn to_closure(&self) -> LoxClosure {
         match self {
-            Value::Function(p) => LoxClosure::new(p.ptr),
+            Value::Function(p) => LoxClosure::new(p.ptr()),
             _ => unreachable!(),
+        }
+    }
+
+    pub fn is_falsey(&self) -> bool {
+        match self {
+            Value::Bool(b) if !b => true,
+            Value::Nil() => true,
+            _ => false,
         }
     }
 }
 
+/* Direct methods to create heap allocated objects, these will not be tied to the 
+ * VM memory management and hence never garbage collected. For appropriate GC coverage
+ * instantiate a LoxHeap struct and create values through those APIs*/
 impl From<String> for Value {
     fn from(s: String) -> Self {
         Value::Str(ValuePtr::new(s))
@@ -195,51 +203,26 @@ impl From<NativeFn> for Value {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct ValuePtr<T> {
-    ptr: *mut T,
-}
-impl<T> Copy for ValuePtr<T> {}
-impl<T> Clone for ValuePtr<T> {
-    fn clone(&self) -> ValuePtr<T> {
-        *self
-    }
-}
-impl<T> ValuePtr<T> {
-    fn new(v: T) -> Self {
-        Self { ptr: ValuePtr::alloc(v) }
-    }
-    fn alloc(val: T) -> *mut T {
-        unsafe {
-            let ptr = alloc(Layout::new::<T>()) as *mut T;
-            ptr::write(ptr, val);
-            ptr
-        }
-    }
-}
-
-impl Value {
-    pub fn is_falsey(&self) -> bool {
-        match self {
-            Value::Bool(b) if !b => true,
-            Value::Nil() => true,
-            _ => false,
+impl From<LoxObject> for Value {
+    fn from(obj: LoxObject) -> Self {
+        match obj {
+            LoxObject::Str(ptr) => Value::Str(ptr),
+            LoxObject::Function(ptr) => Value::Function(ptr),
+            LoxObject::Closure(ptr) => Value::Closure(ptr),
         }
     }
 }
 
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unsafe {
-            match self {
-                Value::Bool(b) => write!(f, "{}", b),
-                Value::Nil() => write!(f, "nil"),
-                Value::Number(n) => write!(f, "{}", n),
-                Value::Str(s) => write!(f, "{}", *s.ptr),
-                Value::Function(s) => write!(f, "{}", *s.ptr),
-                Value::NativeFunction(s) => write!(f, "{}", *s.ptr),
-                Value::Closure(s) => write!(f, "{}", *s.ptr),
-            }
+        match self {
+            Value::Bool(b) => write!(f, "{}", b),
+            Value::Nil() => write!(f, "nil"),
+            Value::Number(n) => write!(f, "{}", n),
+            Value::Str(p) => write!(f, "{}", p.r#ref()),
+            Value::Function(p) => write!(f, "{}", p.r#ref()),
+            Value::NativeFunction(p) => write!(f, "{}", p.r#ref()),
+            Value::Closure(p) => write!(f, "{}", p.r#ref()),
         }
     }
 }

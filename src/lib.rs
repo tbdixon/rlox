@@ -7,6 +7,7 @@ pub mod vm;
 pub mod value;
 pub mod natives;
 pub mod precedence;
+pub mod memory;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
