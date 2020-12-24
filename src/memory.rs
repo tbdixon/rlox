@@ -1,8 +1,80 @@
-use crate::value::{LoxClosure, LoxFn, Value};
+use crate::value::{Closure, LoxFn, Value, NativeFn};
 use std::alloc::{alloc, Layout};
 use std::mem;
 use std::ptr;
 
+#[derive(Debug, Copy, Clone)]
+pub enum LoxObjectType {
+    Str,
+    LoxFn,
+    Closure,
+    NativeFn,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct LoxObject {
+    pub kind: LoxObjectType,
+    pub marked: bool,
+    pub deleted: bool, 
+    ptr: *mut u8,
+}
+
+impl From<String> for LoxObject {
+    fn from(obj: String) -> Self {
+        unsafe {
+            let ptr = alloc(Layout::new::<String>()) as *mut String;
+            ptr::write(ptr, obj);
+            Self {
+                kind: LoxObjectType::Str,
+                marked: false,
+                deleted: false,
+                ptr: ptr as *mut u8,
+            }
+        }
+    }
+}
+impl From<LoxFn> for LoxObject {
+    fn from(obj: LoxFn) -> Self {
+        unsafe {
+            let ptr = alloc(Layout::new::<LoxFn>()) as *mut LoxFn;
+            ptr::write(ptr, obj);
+            Self {
+                kind: LoxObjectType::LoxFn,
+                marked: false,
+                deleted: false,
+                ptr: ptr as *mut u8,
+            }
+        }
+    }
+}
+impl From<Closure> for LoxObject {
+    fn from(obj: Closure) -> Self {
+        unsafe {
+            let ptr = alloc(Layout::new::<Closure>()) as *mut Closure;
+            ptr::write(ptr, obj);
+            Self {
+                kind: LoxObjectType::Closure,
+                marked: false,
+                deleted: false,
+                ptr: ptr as *mut u8,
+            }
+        }
+    }
+}
+impl From<NativeFn> for LoxObject {
+    fn from(obj: NativeFn) -> Self {
+        unsafe {
+            let ptr = alloc(Layout::new::<NativeFn>()) as *mut NativeFn;
+            ptr::write(ptr, obj);
+            Self {
+                kind: LoxObjectType::NativeFn,
+                marked: false,
+                deleted: false,
+                ptr: ptr as *mut u8,
+            }
+        }
+    }
+}/*
 #[derive(Debug, Copy, Clone)]
 pub enum LoxObject {
     Str(ValuePtr<String>),
@@ -50,7 +122,7 @@ impl From<LoxClosure> for LoxObject {
     fn from(c: LoxClosure) -> Self {
         LoxObject::Closure(ValuePtr::new(c))
     }
-}
+}*/
 
 pub struct LoxHeap {
     objects: Vec<LoxObject>,
@@ -81,7 +153,7 @@ impl LoxHeap {
         crate::stress_gc() || self.allocated >= self.next_gc
     }
 
-    pub fn gc(&mut self) {
+    /*    pub fn gc(&mut self) {
         if crate::trace_gc() {
             println!("-- begin gc over {:?}", self.objects);
         }
@@ -99,7 +171,7 @@ impl LoxHeap {
         if crate::trace_gc() {
             println!("-- end gc");
         }
-    }
+    }*/
 }
 
 #[derive(Debug, PartialEq)]

@@ -1,5 +1,5 @@
 use crate::chunk::Chunk;
-use crate::memory::*;
+use crate::memory::{LoxObjectType, LoxObject, LoxHeap};
 use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -9,11 +9,11 @@ pub struct Upvalue {
 }
 /*---------------------------------------------------------------------*/
 #[derive(Debug, PartialEq, Clone)]
-pub struct LoxClosure {
+pub struct Closure {
     pub func: *const LoxFn,
     pub upvalues: Vec<*mut Upvalue>,
 }
-impl LoxClosure {
+impl Closure {
     pub fn new(func: *const LoxFn) -> Self {
         Self {
             func,
@@ -36,7 +36,7 @@ impl LoxClosure {
         unsafe { &(*self.func).chunk }
     }
 }
-impl fmt::Display for LoxClosure {
+impl fmt::Display for Closure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         unsafe { write!(f, "{:?}", (*self.func)) }
     }
@@ -102,11 +102,12 @@ pub enum Value {
     Bool(bool),
     Nil(),
     Number(f64),
-    Str(ValuePtr<String>),
-    Function(ValuePtr<LoxFn>),
-    Closure(ValuePtr<LoxClosure>),
-    NativeFunction(ValuePtr<NativeFn>),
+    Str(LoxObject),
+    LoxFn(LoxObject),
+    Closure(LoxObject),
+    NativeFn(LoxObject),
 }
+//TODO impl equal => ptr same means same, easy. 
 
 impl Value {
     pub fn mark(&mut self) {
@@ -192,32 +193,13 @@ impl Value {
 /* Direct methods to create heap allocated objects, these will not be tied to the
  * VM memory management and hence never garbage collected. For appropriate GC coverage
  * instantiate a LoxHeap struct and create values through those APIs*/
-impl From<String> for Value {
-    fn from(s: String) -> Self {
-        Value::Str(ValuePtr::new(s))
-    }
-}
-impl From<LoxFn> for Value {
-    fn from(f: LoxFn) -> Self {
-        Value::Function(ValuePtr::new(f))
-    }
-}
-impl From<LoxClosure> for Value {
-    fn from(c: LoxClosure) -> Self {
-        Value::Closure(ValuePtr::new(c))
-    }
-}
-impl From<NativeFn> for Value {
-    fn from(f: NativeFn) -> Self {
-        Value::NativeFunction(ValuePtr::new(f))
-    }
-}
 impl From<LoxObject> for Value {
     fn from(obj: LoxObject) -> Self {
-        match obj {
-            LoxObject::Str(ptr) => Value::Str(ptr),
-            LoxObject::Function(ptr) => Value::Function(ptr),
-            LoxObject::Closure(ptr) => Value::Closure(ptr),
+        match obj.kind {
+            LoxObjectType::Str => Value::Str(obj),
+            LoxObjectType::LoxFn => Value::LoxFn(obj),
+            LoxObjectType::Closure => Value::Closure(obj),
+            LoxObjectType::NativeFn => Value::NativeFn(obj),
         }
     }
 }
@@ -228,10 +210,10 @@ impl fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Nil() => write!(f, "nil"),
             Value::Number(n) => write!(f, "{}", n),
-            Value::Str(p) => write!(f, "{}", p.r#ref()),
-            Value::Function(p) => write!(f, "{}", p.r#ref()),
-            Value::NativeFunction(p) => write!(f, "{}", p.r#ref()),
-            Value::Closure(p) => write!(f, "{}", p.r#ref()),
+            Value::Str(p) => write!(f, "{}", p),
+            Value::Function(p) => write!(f, "{}", p),
+            Value::NativeFunction(p) => write!(f, "{}", p),
+            Value::Closure(p) => write!(f, "{}", p),
         }
     }
 }

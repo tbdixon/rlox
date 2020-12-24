@@ -10,29 +10,7 @@ pub mod value;
 pub mod vm;
 
 use crate::memory::LoxHeap;
-pub static mut HEAP: LoxHeap;
-#[macro_use]
-extern crate lazy_static;
-lazy_static! {
-    pub static ref HEAP: LoxHeap = LoxHeap::new()
-}
-use std::alloc::{GlobalAlloc, Layout, System};
-
-#[derive(Debug)]
-struct MyAllocator;
-
-unsafe impl GlobalAlloc for MyAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        System.alloc(layout)
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout)
-    }
-}
-
-#[global_allocator]
-static GLOBAL: MyAllocator = MyAllocator;
+pub static mut HEAP: *mut LoxHeap = 0 as *mut LoxHeap;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub static mut DEBUG: bool = false;
