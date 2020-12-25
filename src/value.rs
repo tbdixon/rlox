@@ -1,39 +1,58 @@
 use crate::chunk::Chunk;
+use crate::memory::ValuePtr;
 use std::fmt;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub struct Upvalue {
     pub location: usize,
-    pub closed: Option<Value>
+    pub closed: Option<Value>,
 }
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct LoxClosure {
-    pub func: *const LoxFn,
-    pub upvalues: Vec<*mut Upvalue>,
+/*---------------------------------------------------------------------*/
+#[derive(Debug, PartialEq)]
+pub struct Closure {
+    func: ValuePtr<LoxFn>,
+    upvalues: Vec<*mut Upvalue>,
 }
-
-impl LoxClosure {
-    pub fn new(func: *const LoxFn) -> Self {
+impl Closure {
+    pub fn new(value: Value) -> Self {
+        let func = match value { 
+            Value::LoxFn(ptr) => ptr,
+            _ => unreachable!(),
+        };
         Self {
             func,
             upvalues: Vec::with_capacity(u8::MAX as usize),
         }
     }
-}
 
-impl fmt::Display for LoxClosure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unsafe { write!(f, "{:?}", (*self.func)) }
+    pub fn get_upvalue(&self, idx: usize) -> *mut Upvalue {
+        self.upvalues[idx]
+    }
+    pub fn add_upvalue(&mut self, upvalue: *mut Upvalue) {
+        self.upvalues.push(upvalue);
+    }
+    pub fn upvalue_count(&self) -> u8 {
+        (*self.func).upvalue_count
+    }
+    pub fn chunk(&self) -> &Chunk {
+        &(*self.func).chunk
+    }
+    pub fn arity(&self) -> u8 {
+        (*self.func).arity
     }
 }
-
+impl fmt::Display for Closure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", (*self.func))
+    }
+}
+/*---------------------------------------------------------------------*/
 #[derive(PartialEq, Clone)]
 pub struct LoxFn {
     pub name: Option<String>,
     pub arity: u8,
-    pub chunk: Chunk,
     pub upvalue_count: u8,
+    pub chunk: Chunk,
 }
 impl LoxFn {
     pub fn new() -> Self {
@@ -57,13 +76,13 @@ impl fmt::Debug for LoxFn {
         write!(f, "LoxFn *{}", self)
     }
 }
-
-#[derive(Clone)]
+/*---------------------------------------------------------------------*/
 pub struct NativeFn {
     pub name: String,
     pub arity: u8,
-    pub func: *const (), // *const () to enable derive(Clone). These need to be dyn Fn(&[Value]) -> Value
+    pub func: Box<dyn Fn(&[Value]) -> Value>,
 }
+
 impl fmt::Display for NativeFn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "<fn {}>", &self.name)
@@ -79,24 +98,34 @@ impl PartialEq for NativeFn {
         self.name == other.name && self.arity == other.arity
     }
 }
-
-pub enum FunctionType {
-    FUNCTION,
-    SCRIPT,
-}
-
-#[derive(Debug, Clone, PartialEq)]
+/*---------------------------------------------------------------------*/
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Value {
     Bool(bool),
     Nil(),
     Number(f64),
-    Str(String),
-    Function(LoxFn),
-    Closure(LoxClosure),
-    NativeFunction(NativeFn),
+    Str(ValuePtr<String>),
+    LoxFn(ValuePtr<LoxFn>),
+    Closure(ValuePtr<Closure>),
+    NativeFn(ValuePtr<NativeFn>),
 }
 
 impl Value {
+    pub fn mark(&mut self) {
+         match self {
+            Value::Str(p) => p.mark(),
+            Value::LoxFn(p) => p.mark(),
+            Value::Closure(p) => p.mark(),
+            Value::NativeFn(p) => p.mark(),
+            _ => unreachable!(),
+        }
+    }
+    pub fn str(&self) -> &str {
+        match self {
+            Value::Str(p) => p.str(),
+            _ => unreachable!(),
+        }
+    }
     pub fn is_falsey(&self) -> bool {
         match self {
             Value::Bool(b) if !b => true,
@@ -112,10 +141,10 @@ impl fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Nil() => write!(f, "nil"),
             Value::Number(n) => write!(f, "{}", n),
-            Value::Str(s) => write!(f, "{}", s),
-            Value::Function(s) => write!(f, "{}", s),
-            Value::NativeFunction(s) => write!(f, "{}", s),
-            Value::Closure(s) => write!(f, "{}", s),
+            Value::Str(p) => write!(f, "{}", p),
+            Value::LoxFn(p) => write!(f, "{}", p),
+            Value::NativeFn(p) => write!(f, "{}", p),
+            Value::Closure(p) => write!(f, "{}", p),
         }
     }
 }
