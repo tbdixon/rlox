@@ -563,7 +563,7 @@ impl VM {
                 println!("-----------------------------------------------------------------");
                 println!("Stack top {}: {:?}", self.stack.len(), self.stack);
                 //self.print_globals();
-                self.print_upvals();
+                //self.print_upvals();
                 disassemble_instruction(self.chunk(), self.ip());
             }
             let instruction = OpCode::from(self.read_byte());

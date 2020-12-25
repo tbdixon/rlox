@@ -1,5 +1,2 @@
-var a = "hello" + "World";
-println(a);
-var b = "bye" + "World";
-var c = a + b;
-println(c);
+var a = 5+5;
+print(a);
