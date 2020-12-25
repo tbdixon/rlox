@@ -1,8 +1,7 @@
 use crate::value::{Closure, LoxFn, NativeFn};
-use std::alloc::{alloc, Layout};
+use std::alloc::Layout;
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::ptr;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum LoxObjectType {
@@ -17,6 +16,7 @@ pub struct LoxObject {
     pub kind: LoxObjectType,
     pub marked: bool,
     pub deleted: bool,
+    pub allocated_size: usize,
     ptr: *mut u8,
 }
 impl std::fmt::Display for LoxObject {
@@ -36,20 +36,19 @@ macro_rules! obj_impl_from {
     ($from_type:ty, $into_type:ident) => {
         impl From<$from_type> for LoxObject {
             fn from(obj: $from_type) -> Self {
-                unsafe {
-                    let ptr = alloc(Layout::new::<$from_type>()) as *mut $from_type;
-                    ptr::write(ptr, obj);
-                    Self {
-                        kind: LoxObjectType::$into_type,
-                        marked: false,
-                        deleted: false,
-                        ptr: ptr as *mut u8,
-                    }
+                let ptr = std::boxed::Box::into_raw(Box::new(obj));
+                Self {
+                    kind: LoxObjectType::$into_type,
+                    marked: false,
+                    deleted: false,
+                    ptr: ptr as *mut u8,
+                    allocated_size: Layout::new::<$from_type>().size()
                 }
             }
         }
     };
 }
+
 obj_impl_from!(String, Str);
 obj_impl_from!(Closure, Closure);
 obj_impl_from!(LoxFn, LoxFn);
@@ -67,23 +66,30 @@ impl LoxObject {
         unsafe { &*(self.ptr as *const String) }
     }
 
-    //TODO capture amount dropped
     fn drop(mut self) {
         assert!(!self.deleted);
         unsafe {
-            println!("dropping {:?} ({:?})", *self.ptr, self.ptr);
+            if crate::trace_gc() {
+                match self.kind {
+                    LoxObjectType::Str => print!("dropping {:?} ", *(self.ptr as *const String)),
+                    LoxObjectType::LoxFn => print!("dropping {:?} ", *(self.ptr as *const LoxFn)),
+                    LoxObjectType::NativeFn => print!("dropping {:?} ", *(self.ptr as *const NativeFn)),
+                    LoxObjectType::Closure => print!("dropping {:?} ", *(self.ptr as *const Closure)),
+                }; 
+                println!("@ {:p}", self.ptr)
+            }
             self.deleted = true;
-            std::ptr::drop_in_place(self.ptr);
+            let _ = std::boxed::Box::from_raw(self.ptr);
         }
     }
 }
 
 pub struct LoxHeap {
-    objects: Vec<LoxObject>,
+    objects: Vec<*mut LoxObject>,
     allocated: usize,
     next_gc: usize,
 }
-const INIT_HEAP_CAPACITY: usize = u8::MAX as usize;
+const INIT_HEAP_CAPACITY: usize = 4 * u8::MAX as usize;
 impl LoxHeap {
     pub fn new() -> Self {
         Self {
@@ -94,16 +100,14 @@ impl LoxHeap {
     }
 
     fn allocate<T: Into<LoxObject>>(&mut self, obj: T) -> ValuePtr<T> {
+        let obj = Box::new(obj.into());
         self.allocated += Layout::new::<T>().size();
-        let mut obj: LoxObject = obj.into();
         if crate::trace_gc() {
-            println!("allocated {:?}", obj);
+            println!("allocated {:?} @ {:p} (total: {})", obj.kind, obj.ptr, self.allocated);
         }
-        self.objects.push(obj);
-        ValuePtr {
-            ptr: &mut obj as *mut LoxObject,
-            phantom: PhantomData,
-        }
+        let ptr = std::boxed::Box::into_raw(obj);
+        self.objects.push(ptr);
+        ValuePtr { ptr, phantom: PhantomData }
     }
 
     fn oom(&self) -> bool {
@@ -112,14 +116,20 @@ impl LoxHeap {
 
     fn gc(&mut self) {
         if crate::trace_gc() {
-            println!("-- begin gc over {:?}", self.objects);
+            println!("-- begin gc");
         }
-/*        for idx in (0..self.objects.len()).rev() {
-            if !self.objects[idx].marked {
-                let obj = self.objects.swap_remove(idx);
-                obj.drop();
+        for idx in (0..self.objects.len()).rev() {
+            unsafe {
+                if !(*self.objects[idx]).marked {
+                    let obj = self.objects.swap_remove(idx);
+                    // Drop the heap allocated value that the LoxObject points to
+                    self.allocated -= (*obj).allocated_size;
+                    (*obj).drop();
+                    // Drop the LoxObject itself
+                    let _ = std::boxed::Box::from_raw(obj);
+                }
             }
-        }*/
+        }
         if crate::trace_gc() {
             println!("-- end gc");
         }
@@ -160,13 +170,13 @@ impl<T> ValuePtr<T> {
     }
 }
 
-impl<T> Deref for ValuePtr<T> {
+impl<T: std::fmt::Debug> Deref for ValuePtr<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
         unsafe {
             assert!(!(*self.ptr).deleted);
-            &*((*(*self.ptr).ptr) as *const T)
+            &*(((*self.ptr).ptr) as *const T)
         }
     }
 }

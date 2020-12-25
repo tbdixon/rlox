@@ -8,7 +8,7 @@ use std::io::prelude::*;
 
 fn main() -> Result<()> {
     /* Set up the global LoxHeap that will be used to allocate objects throughout our compiler and
-     * VM during runtime 
+     * VM during runtime
      *
      * Using a direct raw pointer since lazy_static does not seem to work in LoxHeap (*mut u8
      * doesn't implement Send/Sync. rlox is run as a single threaded VM so at the moment there are

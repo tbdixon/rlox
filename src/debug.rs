@@ -14,7 +14,7 @@ pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
 }
 
 pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
-    debug!("{:04}\t{}\t", offset, chunk.lines[offset]);
+    print!("{:04}\t{}\t", offset, chunk.lines[offset]);
     match OpCode::from(chunk.code[offset]) {
         OP_RETURN => simple_instruction(OP_RETURN, offset),
         OP_CONSTANT => constant_instruction(OP_CONSTANT, chunk, offset),
