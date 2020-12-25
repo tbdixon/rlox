@@ -14,9 +14,9 @@ pub static mut HEAP: *mut LoxHeap = 0 as *mut LoxHeap;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub static mut DEBUG: bool = false;
-pub static mut DEBUG_TRACE_EXECUTION: bool = false;
+pub static mut DEBUG_TRACE_EXECUTION: bool = true;
 pub static mut DEBUG_TRACE_GC: bool = true;
-pub static mut DEBUG_STRESS_GC: bool = true;
+pub static mut DEBUG_STRESS_GC: bool = false;
 pub fn trace_execution() -> bool {
     unsafe { DEBUG || DEBUG_TRACE_EXECUTION }
 }

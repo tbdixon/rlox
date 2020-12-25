@@ -3,9 +3,9 @@ use crate::chunk::OpCode::{self, *};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
-use crate::memory::LoxHeap;
+use crate::memory::{ValuePtr, loxallocate};
 use crate::natives;
-use crate::value::{LoxClosure, NativeFn, Upvalue, Value};
+use crate::value::{Closure, NativeFn, Upvalue, Value};
 use std::collections::BTreeMap;
 use std::mem::discriminant;
 
@@ -40,7 +40,7 @@ impl From<crate::compiler::CompilerError> for InterpretResult {
 
 #[derive(Debug, PartialEq)]
 pub struct CallFrame {
-    closure: *const LoxClosure,
+    closure: ValuePtr<Closure>,
     slot: usize,
     ip: usize,
 }
@@ -61,7 +61,6 @@ pub struct VM {
     stack: Vec<Value>,
     upvalues: Vec<Upvalue>,
     globals: BTreeMap<String, Value>,
-    heap: LoxHeap,
 }
 
 // Two functions to use as pointers for comparisions to avoid some duplication later.
@@ -80,7 +79,6 @@ impl VM {
             stack: Vec::with_capacity(STACK_SIZE),
             upvalues: Vec::with_capacity(u8::MAX as usize),
             globals: BTreeMap::new(),
-            heap: LoxHeap::new(),
         };
         vm.define_native(NativeFn {
             name: "clock".to_string(),
@@ -139,7 +137,7 @@ impl VM {
 
     #[inline]
     fn chunk(&self) -> &Chunk {
-        unsafe { &(*self.frames.last().unwrap().closure).chunk() }
+        &(*self.frames.last().unwrap().closure).chunk()
     }
 
     #[inline]
@@ -153,7 +151,7 @@ impl VM {
     }
 
     #[inline]
-    fn closure(&mut self) -> *const LoxClosure {
+    fn closure(&mut self) -> ValuePtr<Closure> {
         self.frames.last_mut().unwrap().closure
     }
 
@@ -209,16 +207,16 @@ impl VM {
         let function_idx = self.stack.len() - arg_count - 1;
         let function = self.stack[function_idx];
         match function {
-            Value::Closure(_) => {
-                if function.arity() != arg_count as u8 {
-                    println!("Expected {} arguments in {} but got {}", function.arity(), function, arg_count);
+            Value::Closure(ptr) => {
+                if (*ptr).arity() != arg_count as u8 {
+                    println!("Expected {} arguments in {} but got {}", (*ptr).arity(), (*ptr), arg_count);
                     return Err(INTERPRET_RUNTIME_ERROR("Wrong number of arguments"));
                 }
-                self.call(function.closure(), function_idx)
+                self.call(ptr, function_idx)
             }
-            Value::NativeFunction(_) => {
+            Value::NativeFn(ptr) => {
                 let arg_start = function_idx + 1;
-                let result = (function.native())(&self.stack[arg_start..]);
+                let result = ((*ptr).func)(&self.stack[arg_start..]);
                 self.stack.truncate(function_idx);
                 self.push(result);
                 Ok(INTERPRET_OK)
@@ -241,12 +239,12 @@ impl VM {
         Ok(INTERPRET_OK)
     }
 
-    fn call(&mut self, closure: &LoxClosure, slot: usize) -> Result<InterpretResult> {
+    fn call(&mut self, closure: ValuePtr<Closure>, slot: usize) -> Result<InterpretResult> {
         if self.frames.len() == 255 {
             return Err(INTERPRET_RUNTIME_ERROR("Stack overflow"));
         }
         let frame = CallFrame {
-            closure: closure as *const LoxClosure,
+            closure: closure,
             slot,
             ip: 0,
         };
@@ -277,7 +275,7 @@ impl VM {
         &mut self.upvalues[idx]
     }
 
-    fn make_closure(&mut self, mut closure: LoxClosure) -> LoxClosure {
+    fn make_closure(&mut self, mut closure: Closure) -> Closure {
         for _ in 0..closure.upvalue_count() {
             let is_local = self.read_byte();
             let idx = self.read_byte();
@@ -285,9 +283,9 @@ impl VM {
                 let location = self.slot() + idx as usize;
                 self.capture_upvalue(location)
             } else {
-                unsafe { (*self.closure()).get_upvalue(idx as usize) }
+                (*self.closure()).get_upvalue(idx as usize)
             };
-            closure.upvalues.push(upvalue);
+            closure.add_upvalue(upvalue);
         }
         closure
     }
@@ -309,13 +307,9 @@ impl VM {
         let left = self.pop();
         match (left, right) {
             (Value::Number(left), Value::Number(right)) => self.push(Value::Number(left + right)),
-            (Value::Str(_), Value::Str(_)) => {
-                let val = self.heap.allocate(left.to_string() + right.to_str());
-                self.push(val);
-                if self.heap.oom() {
-                    self.mark_roots();
-                    self.heap.gc();
-                }
+            (Value::Str(left), Value::Str(right)) => {
+                let val = loxallocate((*left).clone() + &(*right));
+                self.push(Value::Str(val));
             }
             (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
         };
@@ -375,7 +369,10 @@ impl VM {
     }
 
     fn get_variable_name(&self, addr: usize) -> &str {
-        self.get_constant(addr).to_str()
+        match self.get_constant(addr) {
+            Value::Str(ptr) => &(*ptr),
+            _ => unreachable!()
+        }
     }
 
     fn get_global(&mut self) -> Result<InterpretResult> {
@@ -398,7 +395,7 @@ impl VM {
 
     fn define_native(&mut self, function: NativeFn) -> Result<InterpretResult> {
         let name = function.name.to_string();
-        let native = Value::from(function);
+        let native = Value::NativeFn(loxallocate(function));
         self.globals.insert(name, native);
         Ok(INTERPRET_OK)
     }
@@ -421,14 +418,10 @@ impl VM {
     fn closure_op(&mut self) -> Result<InterpretResult> {
         // Closure sets up a runtime representation of a LoxFn
         let func_addr: usize = self.read_byte() as usize;
-        let func = *self.get_constant(func_addr);
-        let closure = self.make_closure(func.to_closure());
-        let closure = self.heap.allocate(closure);
-        self.push(closure);
-        if self.heap.oom() {
-            self.mark_roots();
-            self.heap.gc();
-        }
+        let closure = Closure::new(*self.get_constant(func_addr));
+        let closure = self.make_closure(closure);
+        let closure = loxallocate(closure);
+        self.push(Value::Closure(closure));
         Ok(INTERPRET_OK)
     }
 
@@ -474,7 +467,7 @@ impl VM {
     fn get_upvalue(&mut self) -> Result<InterpretResult> {
         let upvalue_idx = self.read_byte() as usize;
         unsafe {
-            let upvalue = (*self.closure()).upvalues[upvalue_idx];
+            let upvalue = (*self.closure()).get_upvalue(upvalue_idx);
             let val = match &(*upvalue).closed {
                 Some(val) => val.clone(),
                 None => self.stack[(*upvalue).location].clone(),
@@ -488,7 +481,7 @@ impl VM {
         let new_val = self.peek().clone();
         let upvalue_idx = self.read_byte() as usize;
         unsafe {
-            let upvalue = (*self.closure()).upvalues[upvalue_idx];
+            let upvalue = (*self.closure()).get_upvalue(upvalue_idx);
             match (*upvalue).closed {
                 Some(_) => {
                     (*upvalue).closed = Some(new_val);
@@ -549,9 +542,9 @@ impl VM {
     // Main entry point into the VM -- compile and run.
     pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
         let compiled_source = compile(source)?;
-        let closure = LoxClosure::new(&compiled_source);
-        self.push(Value::from(String::from("script")));
-        self.call(&closure, 0)?;
+        let closure = loxallocate(Closure::new(Value::LoxFn(loxallocate(compiled_source))));
+        self.push(Value::Str(loxallocate("script".to_string())));
+        self.call(closure, 0)?;
         match self.run() {
             Ok(_) => Ok(INTERPRET_OK),
             Err(e) => {
@@ -611,17 +604,5 @@ impl VM {
             }?;
         }
         Ok(status)
-    }
-}
-
-impl VM {
-    fn mark_roots(&mut self) {
-        //frames: Vec<CallFrame>,
-        //upvalues: Vec<Upvalue>,
-        //globals: BTreeMap<String, Value>,
-        for val in &mut self.stack {
-            val.mark();
-            println!("marking {:?}", val);
-        }
     }
 }

@@ -16,7 +16,7 @@ fn main() -> Result<()> {
      */
     let mut heap = LoxHeap::new();
     unsafe {
-        HEAP = &mut *heap;
+        rlox::HEAP = &mut heap;
     }
     std::mem::forget(heap);
 

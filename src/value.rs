@@ -1,20 +1,24 @@
 use crate::chunk::Chunk;
-use crate::memory::{LoxObjectType, LoxObject, LoxHeap};
+use crate::memory::ValuePtr;
 use std::fmt;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub struct Upvalue {
     pub location: usize,
     pub closed: Option<Value>,
 }
 /*---------------------------------------------------------------------*/
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub struct Closure {
-    pub func: *const LoxFn,
-    pub upvalues: Vec<*mut Upvalue>,
+    func: ValuePtr<LoxFn>,
+    upvalues: Vec<*mut Upvalue>,
 }
 impl Closure {
-    pub fn new(func: *const LoxFn) -> Self {
+    pub fn new(value: Value) -> Self {
+        let func = match value { 
+            Value::LoxFn(ptr) => ptr,
+            _ => unreachable!(),
+        };
         Self {
             func,
             upvalues: Vec::with_capacity(u8::MAX as usize),
@@ -24,21 +28,22 @@ impl Closure {
     pub fn get_upvalue(&self, idx: usize) -> *mut Upvalue {
         self.upvalues[idx]
     }
-
     pub fn add_upvalue(&mut self, upvalue: *mut Upvalue) {
         self.upvalues.push(upvalue);
     }
-
     pub fn upvalue_count(&self) -> u8 {
-        unsafe { (*self.func).upvalue_count }
+        (*self.func).upvalue_count
     }
     pub fn chunk(&self) -> &Chunk {
-        unsafe { &(*self.func).chunk }
+        &(*self.func).chunk
+    }
+    pub fn arity(&self) -> u8 {
+        (*self.func).arity
     }
 }
 impl fmt::Display for Closure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unsafe { write!(f, "{:?}", (*self.func)) }
+        write!(f, "{:?}", (*self.func))
     }
 }
 /*---------------------------------------------------------------------*/
@@ -48,7 +53,6 @@ pub struct LoxFn {
     pub arity: u8,
     pub upvalue_count: u8,
     pub chunk: Chunk,
-    pub marked: bool,
 }
 impl LoxFn {
     pub fn new() -> Self {
@@ -57,7 +61,6 @@ impl LoxFn {
             arity: 0,
             chunk: Chunk::new(),
             upvalue_count: 0,
-            marked: false,
         }
     }
 }
@@ -96,110 +99,38 @@ impl PartialEq for NativeFn {
     }
 }
 /*---------------------------------------------------------------------*/
-
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Value {
     Bool(bool),
     Nil(),
     Number(f64),
-    Str(LoxObject),
-    LoxFn(LoxObject),
-    Closure(LoxObject),
-    NativeFn(LoxObject),
+    Str(ValuePtr<String>),
+    LoxFn(ValuePtr<LoxFn>),
+    Closure(ValuePtr<Closure>),
+    NativeFn(ValuePtr<NativeFn>),
 }
-//TODO impl equal => ptr same means same, easy. 
 
 impl Value {
     pub fn mark(&mut self) {
          match self {
             Value::Str(p) => p.mark(),
-            Value::Function(p) => p.mark(),
+            Value::LoxFn(p) => p.mark(),
             Value::Closure(p) => p.mark(),
-            _ => {}
-        }
-    }
-    pub fn to_str(&self) -> &str {
-        match self {
-            Value::Str(p) => p.r#ref(),
+            Value::NativeFn(p) => p.mark(),
             _ => unreachable!(),
         }
     }
-
-    pub fn to_string(&self) -> String {
+    pub fn str(&self) -> &str {
         match self {
-            Value::Str(p) => p.r#ref().to_string(),
+            Value::Str(p) => p.str(),
             _ => unreachable!(),
         }
     }
-
-    pub fn function(&self) -> *const LoxFn {
-        match self {
-            Value::Closure(p) => unsafe { (*p.ptr()).func },
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn closure(&self) -> &LoxClosure {
-        match self {
-            Value::Closure(p) => p.r#ref(),
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn native(&self) -> &Box<dyn Fn(&[Value]) -> Value> {
-        match self {
-            Value::NativeFunction(p) => &p.r#ref().func,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn upvalue_count(&self) -> u8 {
-        match self {
-            Value::Function(p) => unsafe { (*p.ptr()).upvalue_count },
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn arity(&self) -> u8 {
-        match self {
-            Value::Closure(_) => unsafe { (*self.function()).arity },
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn chunk(&self) -> &Chunk {
-        match self {
-            Value::Closure(_) => unsafe { &(*self.function()).chunk },
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn to_closure(&self) -> LoxClosure {
-        match self {
-            Value::Function(p) => LoxClosure::new(p.ptr()),
-            _ => unreachable!(),
-        }
-    }
-
     pub fn is_falsey(&self) -> bool {
         match self {
             Value::Bool(b) if !b => true,
             Value::Nil() => true,
             _ => false,
-        }
-    }
-}
-
-/* Direct methods to create heap allocated objects, these will not be tied to the
- * VM memory management and hence never garbage collected. For appropriate GC coverage
- * instantiate a LoxHeap struct and create values through those APIs*/
-impl From<LoxObject> for Value {
-    fn from(obj: LoxObject) -> Self {
-        match obj.kind {
-            LoxObjectType::Str => Value::Str(obj),
-            LoxObjectType::LoxFn => Value::LoxFn(obj),
-            LoxObjectType::Closure => Value::Closure(obj),
-            LoxObjectType::NativeFn => Value::NativeFn(obj),
         }
     }
 }
@@ -211,8 +142,8 @@ impl fmt::Display for Value {
             Value::Nil() => write!(f, "nil"),
             Value::Number(n) => write!(f, "{}", n),
             Value::Str(p) => write!(f, "{}", p),
-            Value::Function(p) => write!(f, "{}", p),
-            Value::NativeFunction(p) => write!(f, "{}", p),
+            Value::LoxFn(p) => write!(f, "{}", p),
+            Value::NativeFn(p) => write!(f, "{}", p),
             Value::Closure(p) => write!(f, "{}", p),
         }
     }

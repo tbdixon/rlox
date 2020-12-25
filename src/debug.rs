@@ -86,12 +86,12 @@ pub fn closure_instruction(op_code: OpCode, chunk: &Chunk, mut offset: usize) ->
     let constant_addr: usize = chunk.code[offset] as usize;
     let constant_val = &chunk.constant_pool[constant_addr];
     debugln!("{:?} ({:#04X?})\t{:#04X?}\t{:?} ", op_code, binary_code, constant_addr, constant_val);
-    match constant_val {
-        Value::Function(_) => {}
+    let func = match constant_val {
+        Value::LoxFn(ptr) => *ptr,
         _ => panic!("Error debugging"),
     };
     offset += 2;
-    for _ in 0..constant_val.upvalue_count() {
+    for _ in 0..func.upvalue_count {
         debug!("{:04}\t\t", offset);
         let upval_type = if chunk.code[offset - 1] == 0x1 { "local" } else { "upvalue" };
         let upval_idx = chunk.code[offset];
