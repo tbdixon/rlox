@@ -151,9 +151,7 @@ impl VM {
         }
     }
 
-    // A number of functions that help with the indirection around a vector of stacks to ensure
-    // consistent handling of Option / Results and be granular with mutable and immutable borrows
-    // going into the functions as required.
+    // A number of functions that help with the indirection around the stacks
     #[inline]
     fn peek(&self) -> &Value {
         self.stack.last().unwrap()
@@ -164,7 +162,6 @@ impl VM {
         self.stack.pop().unwrap()
     }
 
-    // Frame operations: return information that is relevant to the executing call frame //
     #[inline]
     fn ip(&self) -> usize {
         self.frames.last().unwrap().ip
@@ -230,6 +227,7 @@ impl VM {
     }
 
     // Reads the next byte and moves the instruction pointer.
+    #[inline]
     fn read_byte(&mut self) -> u8 {
         self.increment_ip();
         self.chunk().code[self.ip() - 1]
@@ -342,9 +340,12 @@ impl VM {
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
         let frame = self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Error discarding call frame"))?;
-        //        self.stack.truncate(frame.slot);
-        for _ in 0..self.stack.len() - frame.slot - 1 {
-            self.close_upvalue()?;
+        if self.upvalues.len() == 0 {
+            self.stack.truncate(frame.slot + 1);
+        } else {
+            for _ in 0..self.stack.len() - frame.slot - 1 {
+                self.close_upvalue()?;
+            }
         }
         self.pop();
         Ok(INTERPRET_OK)
