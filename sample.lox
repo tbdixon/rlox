@@ -1,2 +1,3 @@
-var a = 5+5;
-print(a);
+var a = "hello" + "world";
+print("hello" + "world");
+var b = "foo" + "bar";

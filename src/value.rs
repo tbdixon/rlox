@@ -11,11 +11,11 @@ pub struct Upvalue {
 #[derive(Debug, PartialEq)]
 pub struct Closure {
     func: ValuePtr<LoxFn>,
-    upvalues: Vec<*mut Upvalue>,
+    pub upvalues: Vec<*mut Upvalue>,
 }
 impl Closure {
     pub fn new(value: Value) -> Self {
-        let func = match value { 
+        let func = match value {
             Value::LoxFn(ptr) => ptr,
             _ => unreachable!(),
         };
@@ -39,6 +39,9 @@ impl Closure {
     }
     pub fn arity(&self) -> u8 {
         (*self.func).arity
+    }
+    pub fn func(&self) -> ValuePtr<LoxFn> {
+        self.func
     }
 }
 impl fmt::Display for Closure {
@@ -111,13 +114,33 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn mark(&mut self) {
-         match self {
-            Value::Str(p) => p.mark(),
-            Value::LoxFn(p) => p.mark(),
-            Value::Closure(p) => p.mark(),
-            Value::NativeFn(p) => p.mark(),
-            _ => unreachable!(),
+    pub fn mark(&self) {
+        match self {
+            Value::Str(p) => {
+                if crate::trace_gc() {
+                    println!("marking Str {} @ {:p}", p, p)
+                }
+                p.mark();
+            }
+            Value::LoxFn(p) => {
+                if crate::trace_gc() {
+                    println!("marking LoxFn {} @ {:p}", p, p)
+                }
+                p.mark();
+            }
+            Value::Closure(p) => {
+                if crate::trace_gc() {
+                    println!("marking Closure {} @ {:p}", p, p)
+                }
+                p.mark();
+            }
+            Value::NativeFn(p) => {
+                if crate::trace_gc() {
+                    println!("marking NativeFn {} @ {:p}", p, p)
+                }
+                p.mark();
+            }
+            _ => (),
         }
     }
     pub fn str(&self) -> &str {

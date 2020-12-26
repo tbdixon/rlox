@@ -3,7 +3,8 @@ use crate::chunk::OpCode::{self, *};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
-use crate::memory::{ValuePtr, loxallocate};
+use crate::memory;
+use crate::memory::ValuePtr;
 use crate::natives;
 use crate::value::{Closure, NativeFn, Upvalue, Value};
 use std::collections::BTreeMap;
@@ -61,6 +62,7 @@ pub struct VM {
     stack: Vec<Value>,
     upvalues: Vec<Upvalue>,
     globals: BTreeMap<String, Value>,
+    gray_vals: Vec<Value>,
 }
 
 // Two functions to use as pointers for comparisions to avoid some duplication later.
@@ -74,31 +76,79 @@ fn lt(left: f64, right: f64) -> bool {
 use crate::vm::InterpretResult::*;
 impl VM {
     pub fn new() -> VM {
-        let mut vm = VM {
+        VM {
             frames: Vec::with_capacity(MAX_FRAME_COUNT),
             stack: Vec::with_capacity(STACK_SIZE),
             upvalues: Vec::with_capacity(u8::MAX as usize),
+            gray_vals: Vec::with_capacity(STACK_SIZE),
             globals: BTreeMap::new(),
-        };
-        vm.define_native(NativeFn {
+        }
+    }
+
+    pub fn define_natives(&mut self) {
+        self.define_native(NativeFn {
             name: "clock".to_string(),
             arity: 0,
             func: Box::new(natives::clock),
         })
         .unwrap();
-        vm.define_native(NativeFn {
+        self.define_native(NativeFn {
             name: "println".to_string(),
             arity: 1,
             func: Box::new(natives::println),
         })
         .unwrap();
-        vm.define_native(NativeFn {
+        self.define_native(NativeFn {
             name: "print".to_string(),
             arity: 1,
             func: Box::new(natives::print),
         })
         .unwrap();
-        vm
+    }
+
+    pub fn mark_objects(&mut self) {
+        for obj in &self.stack {
+            obj.mark();
+            self.gray_vals.push(*obj);
+        }
+        for obj in &self.upvalues {
+            if let Some(closed) = obj.closed {
+                closed.mark();
+                self.gray_vals.push(closed);
+            }
+        }
+        for (_, obj) in &self.globals {
+            obj.mark();
+            self.gray_vals.push(*obj);
+        }
+        for frame in &self.frames {
+            frame.closure.mark();
+            self.gray_vals.push(Value::Closure(frame.closure));
+        }
+    }
+
+    pub fn trace_refs(&mut self) {
+        while self.gray_vals.len() > 0 {
+            match self.gray_vals.pop().unwrap() {
+                Value::Closure(ptr) => {
+                    for upvalue in &ptr.upvalues {
+                        unsafe {
+                            if let Some(closed) = (*(*upvalue)).closed {
+                                closed.mark();
+                            }
+                        }
+                    }
+                    if !ptr.func().is_marked() {
+                        ptr.func().mark();
+                        self.gray_vals.push(Value::LoxFn(ptr.func()));
+                    }
+                }
+                Value::LoxFn(_) => {}    // Functions are static allocated during compilation at this point
+                Value::Str(_) => {}      // Strings have no references
+                Value::NativeFn(_) => {} // Native functions are static allocated at startup at this point
+                _ => {}
+            }
+        }
     }
 
     // A number of functions that help with the indirection around a vector of stacks to ensure
@@ -303,12 +353,19 @@ impl VM {
     // Very duplicated code, but as of yet I can't figure out a way to pass in a generic
     // function that will take either f64, f64 -> f64 and String, String -> String.
     fn binary_add(&mut self) -> Result<InterpretResult> {
-        let right = self.pop();
-        let left = self.pop();
+        let right = &self.stack[self.stack.len() - 1];
+        let left = &self.stack[self.stack.len() - 2];
         match (left, right) {
-            (Value::Number(left), Value::Number(right)) => self.push(Value::Number(left + right)),
+            (Value::Number(left), Value::Number(right)) => {
+                let sum = left + right;
+                self.pop();
+                self.pop();
+                self.push(Value::Number(sum));
+            }
             (Value::Str(left), Value::Str(right)) => {
-                let val = loxallocate((*left).clone() + &(*right));
+                let val = memory::allocate((**left).clone() + &(**right));
+                self.pop();
+                self.pop();
                 self.push(Value::Str(val));
             }
             (_, _) => return Err(INTERPRET_RUNTIME_ERROR("Invalid operand types")),
@@ -371,7 +428,7 @@ impl VM {
     fn get_variable_name(&self, addr: usize) -> &str {
         match self.get_constant(addr) {
             Value::Str(ptr) => &(*ptr),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -395,7 +452,7 @@ impl VM {
 
     fn define_native(&mut self, function: NativeFn) -> Result<InterpretResult> {
         let name = function.name.to_string();
-        let native = Value::NativeFn(loxallocate(function));
+        let native = Value::NativeFn(memory::staticallocate(function));
         self.globals.insert(name, native);
         Ok(INTERPRET_OK)
     }
@@ -420,7 +477,7 @@ impl VM {
         let func_addr: usize = self.read_byte() as usize;
         let closure = Closure::new(*self.get_constant(func_addr));
         let closure = self.make_closure(closure);
-        let closure = loxallocate(closure);
+        let closure = memory::allocate(closure);
         self.push(Value::Closure(closure));
         Ok(INTERPRET_OK)
     }
@@ -541,9 +598,9 @@ impl VM {
 
     // Main entry point into the VM -- compile and run.
     pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
-        let compiled_source = compile(source)?;
-        let closure = loxallocate(Closure::new(Value::LoxFn(loxallocate(compiled_source))));
-        self.push(Value::Str(loxallocate("script".to_string())));
+        let main = memory::staticallocate(compile(source)?);
+        let closure = memory::staticallocate(Closure::new(Value::LoxFn(main)));
+        self.push(Value::Str(memory::staticallocate("script".to_string())));
         self.call(closure, 0)?;
         match self.run() {
             Ok(_) => Ok(INTERPRET_OK),

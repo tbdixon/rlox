@@ -5,6 +5,8 @@ use std::env;
 use std::fs;
 use std::io;
 use std::io::prelude::*;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 fn main() -> Result<()> {
     /* Set up the global LoxHeap that will be used to allocate objects throughout our compiler and
@@ -14,11 +16,13 @@ fn main() -> Result<()> {
      * doesn't implement Send/Sync. rlox is run as a single threaded VM so at the moment there are
      * no concerns with threading issues around an unlocked global mutable variable such as this.
      */
-    let mut heap = LoxHeap::new();
+    let vm = Rc::new(RefCell::new(VM::new()));
+    let mut heap = LoxHeap::new(vm.clone());
     unsafe {
         rlox::HEAP = &mut heap;
     }
     std::mem::forget(heap);
+    vm.borrow_mut().define_natives();
 
     /* Don't read from environment variable in --release. This ensures that the global rlox::DEBUG
      * is definitely false so compiler can get rid of all conditional checks (non-trivial cost with
@@ -35,11 +39,10 @@ fn main() -> Result<()> {
     // If there is a single argument, parse that as the name of a Lox script
     // If there are more than one arguments, panic.
     match args.len() {
-        1 => repl()?,
+        1 => repl(vm)?,
         2 => {
             let script = fs::read_to_string(&args[1]).expect(&format!("Unable to read script {}", args[1]));
-            let mut vm = VM::new();
-            vm.interpret(&script)?;
+            vm.borrow_mut().interpret(&script)?;
         }
         _ => {
             panic!("Invalid arguments received: {:?}", args);
@@ -48,13 +51,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn repl() -> Result<()> {
-    let mut vm = VM::new();
+fn repl(vm: Rc<RefCell<VM>>) -> Result<()> {
     loop {
         let mut line = String::new();
         print!("> ");
         io::stdout().flush()?;
         io::stdin().read_line(&mut line)?;
-        vm.interpret(&line[..])?;
+        vm.borrow_mut().interpret(&line[..])?;
     }
 }
