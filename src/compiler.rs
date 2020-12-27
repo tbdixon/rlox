@@ -442,7 +442,7 @@ impl Compiler {
         } else {
             self.emit_bytes(OP_SET_LOCAL as u8, var_idx as u8);
         }
-        self.load_identifier(&class_name, false); 
+        self.load_identifier(&class_name, false);
         self.class();
     }
 

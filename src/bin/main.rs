@@ -1,12 +1,12 @@
 use rlox::memory::LoxHeap;
 use rlox::vm::VM;
 use rlox::Result;
+use std::cell::RefCell;
 use std::env;
 use std::fs;
 use std::io;
 use std::io::prelude::*;
 use std::rc::Rc;
-use std::cell::RefCell;
 
 fn main() -> Result<()> {
     /* Set up the global LoxHeap that will be used to allocate objects throughout our compiler and

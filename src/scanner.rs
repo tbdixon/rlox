@@ -220,11 +220,11 @@ impl TokenStream {
     pub fn match_(&mut self, expected: TokenType) -> bool {
         if expected == self.peek().kind {
             self.next();
-            return true
+            return true;
         }
         false
     }
-    
+
     // Consumes and advances if there is a specific type of
     // token encountered e.g. to consume the closing ")" in a grouping
     // this will ensure that token is found and then advance beyond it.

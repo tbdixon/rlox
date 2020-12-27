@@ -1,4 +1,4 @@
-use crate::value::{Class, Closure, Instance, LoxFn, NativeFn, BoundMethod};
+use crate::value::{BoundMethod, Class, Closure, Instance, LoxFn, NativeFn};
 use crate::vm::VM;
 use std::alloc::Layout;
 use std::cell::RefCell;

@@ -4,11 +4,11 @@ pub mod compiler;
 pub mod debug;
 pub mod memory;
 pub mod natives;
+pub mod opcode;
 pub mod precedence;
 pub mod scanner;
 pub mod value;
 pub mod vm;
-pub mod opcode;
 
 use crate::memory::LoxHeap;
 pub static mut HEAP: *mut LoxHeap = 0 as *mut LoxHeap;
