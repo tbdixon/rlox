@@ -1,3 +1,6 @@
-var a = "hello" + "world";
-print("hello" + "world");
-var b = "foo" + "bar";
+class fish {}
+var f = fish();
+f.a = 5;
+f.b = 10;
+print(f.a + f.b);
+

@@ -1,12 +1,12 @@
 use crate::chunk::Chunk;
-use crate::chunk::OpCode::{self, *};
 use crate::compiler::compile;
 use crate::debug::disassemble_instruction;
 use crate::debugln;
 use crate::memory;
 use crate::memory::ValuePtr;
 use crate::natives;
-use crate::value::{Closure, NativeFn, Upvalue, Value};
+use crate::opcode::OpCode::{self, *};
+use crate::value::{Class, Closure, Instance, NativeFn, Upvalue, Value};
 use std::collections::BTreeMap;
 use std::mem::discriminant;
 
@@ -143,9 +143,18 @@ impl VM {
                         self.gray_vals.push(Value::LoxFn(ptr.func()));
                     }
                 }
-                Value::LoxFn(_) => {}    // Functions are static allocated during compilation at this point
+                Value::Instance(ptr) => {
+                    for (_, field) in &ptr.fields {
+                        field.mark();
+                    }
+                    if !ptr.class.is_marked() {
+                        ptr.class.mark();
+                        self.gray_vals.push(Value::Class(ptr.class));
+                    }
+                }
+                Value::LoxFn(_) => {}    // Functions are static allocated during compilation
+                Value::NativeFn(_) => {} // Native functions are static allocated at startup
                 Value::Str(_) => {}      // Strings have no references
-                Value::NativeFn(_) => {} // Native functions are static allocated at startup at this point
                 _ => {}
             }
         }
@@ -209,6 +218,15 @@ impl VM {
         }
     }
 
+    fn print_stack(&self) {
+        print!("Stack top {}: ", self.stack.len());
+        print!("[");
+        for val in &self.stack {
+            print!(" [{}], ", val);
+        }
+        println!("]");
+    }
+
     #[allow(dead_code)]
     fn print_upvals(&self) {
         if !self.upvalues.is_empty() {
@@ -255,6 +273,12 @@ impl VM {
         let function_idx = self.stack.len() - arg_count - 1;
         let function = self.stack[function_idx];
         match function {
+            Value::Class(ptr) => {
+                let instance = Value::Instance(memory::allocate(Instance::new(ptr)));
+                self.stack.pop();
+                self.push(instance);
+                Ok(INTERPRET_OK)
+            }
             Value::Closure(ptr) => {
                 if (*ptr).arity() != arg_count as u8 {
                     println!("Expected {} arguments in {} but got {}", (*ptr).arity(), (*ptr), arg_count);
@@ -447,7 +471,7 @@ impl VM {
     fn define_global(&mut self) -> Result<InterpretResult> {
         let init_val = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow def global"))?;
         let var_name = self.stack.pop().ok_or(INTERPRET_RUNTIME_ERROR("Stack underflow def global"))?;
-        self.globals.insert(var_name.to_string(), init_val);
+        self.globals.insert(var_name.str().to_string(), init_val);
         Ok(INTERPRET_OK)
     }
 
@@ -480,6 +504,14 @@ impl VM {
         let closure = self.make_closure(closure);
         let closure = memory::allocate(closure);
         self.push(Value::Closure(closure));
+        Ok(INTERPRET_OK)
+    }
+
+    fn class(&mut self) -> Result<InterpretResult> {
+        let class_name = (*self.peek()).str();
+        let class = Class::new(class_name);
+        let class = Value::Class(memory::allocate(class));
+        self.push(class);
         Ok(INTERPRET_OK)
     }
 
@@ -519,6 +551,26 @@ impl VM {
         let new_val = self.stack.last().ok_or(INTERPRET_RUNTIME_ERROR("No value on stack to assign"))?;
         let slot = self.slot();
         self.stack[slot + local_index] = *new_val;
+        Ok(INTERPRET_OK)
+    }
+
+    fn set_property(&mut self) -> Result<InterpretResult> {
+        let field_addr = self.read_byte() as usize;
+        let field_name = self.get_constant(field_addr).str().to_string();
+        let val = self.pop();
+        let mut instance = self.pop();
+        instance.set_field(&field_name, val);
+        self.push(val);
+        Ok(INTERPRET_OK)
+    }
+
+    fn get_property(&mut self) -> Result<InterpretResult> {
+        let field_addr = self.read_byte() as usize;
+        let field_name = *self.get_constant(field_addr);
+        let instance = self.pop();
+        let fields = instance.fields();
+        let val = fields.get(field_name.str()).ok_or_else(|| INTERPRET_RUNTIME_ERROR("Field not defined"))?;
+        self.push(*val);
         Ok(INTERPRET_OK)
     }
 
@@ -597,6 +649,11 @@ impl VM {
         Ok(INTERPRET_OK)
     }
 
+    fn pop_op(&mut self) -> Result<InterpretResult> {
+        self.pop();
+        Ok(INTERPRET_OK)
+    }
+
     // Main entry point into the VM -- compile and run.
     pub fn interpret(&mut self, source: &str) -> Result<InterpretResult> {
         let main = memory::staticallocate(compile(source)?);
@@ -619,7 +676,7 @@ impl VM {
         while status == INTERPRET_OK {
             if crate::trace_execution() {
                 println!("-----------------------------------------------------------------");
-                println!("Stack top {}: {:?}", self.stack.len(), self.stack);
+                self.print_stack();
                 //self.print_globals();
                 //self.print_upvals();
                 disassemble_instruction(self.chunk(), self.ip());
@@ -640,10 +697,7 @@ impl VM {
                 OP_MULTIPLY => self.binary(&std::ops::Mul::mul),
                 OP_SUBTRACT => self.binary(&std::ops::Sub::sub),
                 OP_DIVIDE => self.binary(&std::ops::Div::div),
-                OP_POP => {
-                    self.pop();
-                    Ok(INTERPRET_OK)
-                }
+                OP_POP => self.pop_op(),
                 OP_SET_LOCAL => self.set_local(),
                 OP_GET_GLOBAL => self.get_global(),
                 OP_GET_UPVALUE => self.get_upvalue(),
@@ -652,6 +706,9 @@ impl VM {
                 OP_TRUE => self.true_(),
                 OP_FALSE => self.false_(),
                 OP_NOT => self.not(),
+                OP_CLASS => self.class(),
+                OP_SET_PROPERTY => self.set_property(),
+                OP_GET_PROPERTY => self.get_property(),
                 OP_DEFINE_GLOBAL => self.define_global(),
                 OP_SET_GLOBAL => self.set_global(),
                 OP_SET_UPVALUE => self.set_upvalue(),

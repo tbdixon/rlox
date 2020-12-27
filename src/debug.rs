@@ -1,16 +1,15 @@
 use crate::chunk::Chunk;
-use crate::chunk::OpCode::{self, *};
+use crate::opcode::OpCode::{self, *};
 use crate::value::Value;
-use crate::{debug, debugln};
 
 pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
-    debugln!("== {} ==", name);
-    debugln!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
+    println!("== {} ==", name);
+    println!("ADDRESS\t|LINE\t|OP_CODE\t|OPERANDS\t|VALUES");
     let mut offset: usize = 0;
     while offset < chunk.code.len() {
         offset = disassemble_instruction(&chunk, offset);
     }
-    debugln!("== {} ==", name);
+    println!("== {} ==", name);
 }
 
 pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
@@ -41,12 +40,15 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OP_JUMP => jump_instruction(OP_JUMP, 1, chunk, offset),
         OP_LOOP => jump_instruction(OP_LOOP, -1, chunk, offset),
         OP_CALL => byte_instruction(OP_CALL, chunk, offset),
+        OP_CLASS => simple_instruction(OP_CLASS, offset),
         OP_CLOSURE => closure_instruction(OP_CLOSURE, chunk, offset),
         OP_GET_UPVALUE => byte_instruction(OP_GET_UPVALUE, chunk, offset),
         OP_SET_UPVALUE => byte_instruction(OP_SET_UPVALUE, chunk, offset),
+        OP_GET_PROPERTY => constant_instruction(OP_GET_PROPERTY, chunk, offset),
+        OP_SET_PROPERTY => constant_instruction(OP_SET_PROPERTY, chunk, offset),
         OP_CLOSE_UPVALUE => byte_instruction(OP_CLOSE_UPVALUE, chunk, offset),
         OP_UNKNOWN => {
-            debugln!("Unknown Opcode Encountered");
+            println!("Unknown Opcode Encountered");
             offset + 1
         }
     }
@@ -54,7 +56,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
 
 pub fn simple_instruction(op_code: OpCode, offset: usize) -> usize {
     let binary_code: u8 = op_code.into();
-    debugln!("{:?} ({:#04X?})", op_code, binary_code);
+    println!("{:?} ({:#04X?})", op_code, binary_code);
     offset + 1
 }
 
@@ -69,14 +71,14 @@ pub fn jump_instruction(op_code: OpCode, sign: i8, chunk: &Chunk, offset: usize)
     } else {
         end_location += jump as usize;
     }
-    debugln!("{:?} ({:#04X?})\t{:04} -> {:04} ", op_code, binary_code, offset, end_location);
+    println!("{:?} ({:#04X?})\t{:04} -> {:04} ", op_code, binary_code, offset, end_location);
     offset + 3
 }
 
 pub fn byte_instruction(op_code: OpCode, chunk: &Chunk, offset: usize) -> usize {
     let binary_code: u8 = op_code.into();
     let byte_instr: usize = chunk.code[offset + 1] as usize;
-    debugln!("{:?} ({:#04X?})\t{:#04X?} ", op_code, binary_code, byte_instr,);
+    println!("{:?} ({:#04X?})\t{:#04X?} ", op_code, binary_code, byte_instr,);
     offset + 2
 }
 
@@ -85,17 +87,17 @@ pub fn closure_instruction(op_code: OpCode, chunk: &Chunk, mut offset: usize) ->
     offset = offset + 1;
     let constant_addr: usize = chunk.code[offset] as usize;
     let constant_val = &chunk.constant_pool[constant_addr];
-    debugln!("{:?} ({:#04X?})\t{:#04X?}\t{:?} ", op_code, binary_code, constant_addr, constant_val);
+    println!("{:?} ({:#04X?})\t{:#04X?}\t{:?} ", op_code, binary_code, constant_addr, constant_val);
     let func = match constant_val {
         Value::LoxFn(ptr) => *ptr,
         _ => panic!("Error debugging"),
     };
     offset += 2;
     for _ in 0..func.upvalue_count {
-        debug!("{:04}\t\t", offset);
+        print!("{:04}\t\t", offset);
         let upval_type = if chunk.code[offset - 1] == 0x1 { "local" } else { "upvalue" };
         let upval_idx = chunk.code[offset];
-        debugln!("|\t\t\t\t{}\t{} ", upval_type, upval_idx);
+        println!("|\t\t\t\t{}\t{} ", upval_type, upval_idx);
         offset += 2;
     }
     offset
@@ -105,6 +107,6 @@ pub fn constant_instruction(op_code: OpCode, chunk: &Chunk, offset: usize) -> us
     let binary_code: u8 = op_code.into();
     let constant_addr: usize = chunk.code[offset + 1] as usize;
     let constant_val = &chunk.constant_pool[constant_addr];
-    debugln!("{:?} ({:#04X?})\t{:#04X?}\t{:?} ", op_code, binary_code, constant_addr, constant_val);
+    println!("{:?} ({:#04X?})\t{:#04X?}\t{}", op_code, binary_code, constant_addr, constant_val);
     offset + 2
 }

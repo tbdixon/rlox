@@ -43,6 +43,7 @@ pub fn get_precedence(kind: TokenType) -> Precedence {
         TOKEN_LESS_EQUAL => PREC_COMPARISON,
         TOKEN_OR => PREC_OR,
         TOKEN_AND => PREC_AND,
+        TOKEN_DOT => PREC_CALL,
         _ => PREC_NONE,
     }
 }

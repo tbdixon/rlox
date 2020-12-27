@@ -1,5 +1,6 @@
 use crate::chunk::Chunk;
 use crate::memory::ValuePtr;
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -88,7 +89,7 @@ pub struct NativeFn {
 
 impl fmt::Display for NativeFn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<fn {}>", &self.name)
+        write!(f, "<fn {}>", self.name)
     }
 }
 impl fmt::Debug for NativeFn {
@@ -102,6 +103,43 @@ impl PartialEq for NativeFn {
     }
 }
 /*---------------------------------------------------------------------*/
+#[derive(Debug, PartialEq)]
+pub struct Class {
+    name: String,
+    methods: HashMap<String, Value>,    
+}
+
+impl Class {
+    pub fn new(name: &str) -> Self {
+        Class{ name: name.to_string(), methods: HashMap::new() }
+    }
+}
+impl fmt::Display for Class {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+/*---------------------------------------------------------------------*/
+#[derive(Debug, PartialEq)]
+pub struct Instance {
+    pub class: ValuePtr<Class>,
+    pub fields: HashMap<String, Value>,    
+}
+
+impl Instance {
+    pub fn new(class: ValuePtr<Class>) -> Self {
+        Instance{ class, fields: HashMap::new() }
+    }
+    pub fn set_field(&mut self, field_name: &str, val: Value) {
+        self.fields.insert(field_name.to_string(), val);
+    }
+}
+impl fmt::Display for Instance {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} instance:{:?}", self.class.name, self.fields)
+    }
+}
+/*---------------------------------------------------------------------*/
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Value {
     Bool(bool),
@@ -111,6 +149,8 @@ pub enum Value {
     LoxFn(ValuePtr<LoxFn>),
     Closure(ValuePtr<Closure>),
     NativeFn(ValuePtr<NativeFn>),
+    Class(ValuePtr<Class>),
+    Instance(ValuePtr<Instance>),
 }
 
 impl Value {
@@ -140,13 +180,45 @@ impl Value {
                 }
                 p.mark();
             }
-            _ => (),
+            Value::Class(p) => {
+                if crate::trace_gc() {
+                    println!("marking Class {} @ {:p}", p, p)
+                }
+                p.mark();
+            }
+            Value::Instance(p) => {
+                if crate::trace_gc() {
+                    println!("marking Instance {} @ {:p}", p, p)
+                }
+                p.mark();
+            }
+              _ => (),
         }
     }
     pub fn str(&self) -> &str {
         match self {
             Value::Str(p) => p.str(),
             _ => unreachable!(),
+        }
+    }
+    pub fn fields(&self) -> &HashMap<String, Value> {
+        match self {
+            Value::Instance(p) => &p.fields,
+            _ => unreachable!(),
+        }
+    }
+    pub fn set_field(&mut self, field_name: &str, val: Value) {
+        match self {
+            Value::Instance(p) => {
+                (*p).set_field(field_name,val)
+            }
+            _ => unreachable!(),
+        }
+    }
+    pub fn print(&self) -> String {
+        match self {
+            Value::Str(p) => p.str().to_string(),
+            _ => self.to_string(),
         }
     }
     pub fn is_falsey(&self) -> bool {
@@ -168,6 +240,8 @@ impl fmt::Display for Value {
             Value::LoxFn(p) => write!(f, "{}", p),
             Value::NativeFn(p) => write!(f, "{}", p),
             Value::Closure(p) => write!(f, "{}", p),
+            Value::Class(p) => write!(f, "{}", p),
+            Value::Instance(p) => write!(f, "{}", p),
         }
     }
 }

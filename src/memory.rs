@@ -1,9 +1,9 @@
-use crate::value::{Closure, LoxFn, NativeFn};
+use crate::value::{Closure, LoxFn, NativeFn, Class, Instance};
 use crate::vm::VM;
 use std::alloc::Layout;
 use std::cell::RefCell;
 use std::marker::PhantomData;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -12,6 +12,8 @@ pub enum LoxObjectType {
     LoxFn,
     Closure,
     NativeFn,
+    Class, 
+    Instance,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -27,10 +29,12 @@ impl std::fmt::Display for LoxObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         unsafe {
             match self.kind {
-                LoxObjectType::Str => write!(f, "{}", &*(self.ptr as *const String)),
-                LoxObjectType::LoxFn => write!(f, "{}", &*(self.ptr as *const LoxFn)),
-                LoxObjectType::Closure => write!(f, "{}", &*(self.ptr as *const Closure)),
-                LoxObjectType::NativeFn => write!(f, "{}", &*(self.ptr as *const NativeFn)),
+                LoxObjectType::Str => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const String)),
+                LoxObjectType::LoxFn => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const LoxFn)),
+                LoxObjectType::Closure => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const Closure)),
+                LoxObjectType::NativeFn => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const NativeFn)),
+                LoxObjectType::Class => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const Class)),
+                LoxObjectType::Instance => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const Instance)),
             }
         }
     }
@@ -58,6 +62,8 @@ obj_impl_from!(String, Str);
 obj_impl_from!(Closure, Closure);
 obj_impl_from!(LoxFn, LoxFn);
 obj_impl_from!(NativeFn, NativeFn);
+obj_impl_from!(Class, Class);
+obj_impl_from!(Instance, Instance);
 
 macro_rules! obj_assert {
     ($self:ident, $type:ident) => {
@@ -75,12 +81,14 @@ impl LoxObject {
         assert!(!self.deleted);
         unsafe {
             if crate::trace_gc() {
-                print!("\t\t");
+                print!("\t\t-");
                 match self.kind {
                     LoxObjectType::Str => print!("dropping {:?} ", *(self.ptr as *const String)),
                     LoxObjectType::LoxFn => print!("dropping {:?} ", *(self.ptr as *const LoxFn)),
                     LoxObjectType::NativeFn => print!("dropping {:?} ", *(self.ptr as *const NativeFn)),
                     LoxObjectType::Closure => print!("dropping {:?} ", *(self.ptr as *const Closure)),
+                    LoxObjectType::Class => print!("dropping {:?} ", *(self.ptr as *const Class)),
+                    LoxObjectType::Instance => print!("dropping {:?} ", *(self.ptr as *const Instance)),
                 };
                 println!("@ {:p}", self.ptr)
             }
@@ -243,9 +251,19 @@ impl<T: std::fmt::Debug> Deref for ValuePtr<T> {
         }
     }
 }
+impl<T: std::fmt::Debug> DerefMut for ValuePtr<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe {
+            assert!(!(*self.ptr).deleted);
+            &mut *(((*self.ptr).ptr) as *mut T)
+        }
+    }
+}
+
 
 impl<T> std::fmt::Display for ValuePtr<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unsafe { write!(f, "{}", *self.ptr) }
+        unsafe { write!(f, "ValuePtr* {}", *self.ptr) }
     }
 }

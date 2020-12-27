@@ -6,11 +6,11 @@ pub fn clock(_: &[Value]) -> Value {
 }
 
 pub fn println(arg: &[Value]) -> Value {
-    println!("{}", arg[0]);
+    println!("{}", arg[0].print());
     Value::Nil()
 }
 
 pub fn print(arg: &[Value]) -> Value {
-    print!("{}", arg[0]);
+    print!("{}", arg[0].print());
     Value::Nil()
 }

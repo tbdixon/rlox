@@ -1,12 +1,12 @@
-use crate::chunk::OpCode::{self, *};
 use crate::debug::disassemble_chunk;
+use crate::memory::staticallocate;
+use crate::opcode::OpCode::{self, *};
 use crate::precedence::get_precedence;
 use crate::precedence::Precedence;
 use crate::precedence::Precedence::*;
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token, TokenStream};
 use crate::value::{LoxFn, Value};
-use crate::memory::staticallocate;
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
@@ -86,7 +86,7 @@ impl Compiler {
 
     // TODO: Verify how drop works here with raw pointer.
     fn end_function(self) {
-        if crate::debug() {
+        if crate::trace_execution() {
             disassemble_chunk(&self.function.chunk, &format!("Compiling {} complete", self.function));
         }
         unsafe {
@@ -394,6 +394,7 @@ impl Compiler {
             let token = self.peek();
             // println!("Precedence before infix: {:?}. Previous: {:?}. Current: {:?}", precedence, token, self.peek());
             match token.kind {
+                TOKEN_DOT => self.dot(can_assign),
                 TOKEN_LEFT_PAREN => self.call(),
                 TOKEN_OR => self.or(),
                 TOKEN_AND => self.and(),
@@ -420,6 +421,7 @@ impl Compiler {
         match self.peek().kind {
             TOKEN_FUN => self.fun_declaration(),
             TOKEN_VAR => self.var_declaration(),
+            TOKEN_CLASS => self.class_declaration(),
             _ => self.statement(),
         }
         // If we hit an error parsing, synchronize to the next valid point.
@@ -427,6 +429,20 @@ impl Compiler {
         // so we grab any additional errors.
         if self.panic_mode {
             self.synchronize();
+        }
+    }
+
+    fn class_declaration(&mut self) {
+        self.expect(TOKEN_CLASS, "Expect 'class' at the start of class declaration");
+        let class_name = self.peek().lexeme;
+        let var_idx = self.parse_variable();
+        self.emit_byte(OP_CLASS as u8);
+        self.class(&class_name);
+        // Define / set the class as a global or variable
+        if self.depth == 0 {
+            self.emit_byte(OP_DEFINE_GLOBAL as u8);
+        } else {
+            self.emit_bytes(OP_SET_LOCAL as u8, var_idx as u8);
         }
     }
 
@@ -763,6 +779,18 @@ impl Compiler {
         }
     }
 
+    fn dot(&mut self, can_assign: bool) {
+        self.expect(TOKEN_DOT, "Expect '.' before setter / getter");
+        let field = self.next();
+        let field_idx = self.create_constant(Value::Str(staticallocate(field.lexeme.to_string())));
+        if can_assign && self.match_(TOKEN_EQUAL) {
+            self.expression();
+            self.emit_bytes(OP_SET_PROPERTY as u8, field_idx as u8);
+        } else {
+            self.emit_bytes(OP_GET_PROPERTY as u8, field_idx as u8);
+        }
+    }
+
     // Entry into a function call
     fn call(&mut self) {
         self.expect(TOKEN_LEFT_PAREN, "Expect '(' before argument(s)");
@@ -818,6 +846,11 @@ impl Compiler {
         arg_count
     }
 
+    fn class(&mut self, class_name: &str) {
+        self.expect(TOKEN_LEFT_BRACE, "Expect '{' at start of class declaration");
+        self.expect(TOKEN_RIGHT_BRACE, "Expect '}' at end of class declaration");
+    }
+
     fn function(&mut self, fun_name: &str) {
         let mut compiler = self.start_function(fun_name);
         // Start a new scope to avoid anything being defined as a global inside of a function
@@ -858,7 +891,7 @@ pub fn compile(source: &str) -> Result<LoxFn, CompilerError> {
         compiler.declaration();
     }
     compiler.emit_byte(OP_RETURN as u8);
-    if crate::debug() {
+    if crate::trace_execution() {
         disassemble_chunk(&compiler.function.chunk, "Compiling Script Complete");
     }
 

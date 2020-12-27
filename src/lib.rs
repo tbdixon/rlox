@@ -8,13 +8,14 @@ pub mod precedence;
 pub mod scanner;
 pub mod value;
 pub mod vm;
+pub mod opcode;
 
 use crate::memory::LoxHeap;
 pub static mut HEAP: *mut LoxHeap = 0 as *mut LoxHeap;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub static mut DEBUG: bool = false;
-pub static mut DEBUG_TRACE_EXECUTION: bool = false;
+pub static mut DEBUG_TRACE_EXECUTION: bool = true;
 pub static mut DEBUG_TRACE_GC: bool = false;
 pub static mut DEBUG_STRESS_GC: bool = false;
 pub fn trace_execution() -> bool {
