@@ -137,8 +137,8 @@ impl Compiler {
 
     // Looks for and returns the index of a local variable by name starting in current
     // depth / scope and working backwards. None if not found.
-    fn resolve_local(&self, token: &Token) -> Option<usize> {
-        self.find_local(&token.lexeme)
+    fn resolve_local(&self, identifier: &str) -> Option<usize> {
+        self.find_local(identifier)
     }
 
     fn add_upvalue(&mut self, upvalue: Upvalue) -> usize {
@@ -154,7 +154,7 @@ impl Compiler {
         self.upvalues.len() - 1
     }
 
-    fn resolve_upvalue(&mut self, token: &Token) -> Option<usize> {
+    fn resolve_upvalue(&mut self, identifier: &str) -> Option<usize> {
         // Enclosing is a raw pointer--Null occurs for the outermost function / compiler
         // and means that the variable is global (or a syntax error and does not exist).
         if self.enclosing.is_null() {
@@ -176,7 +176,7 @@ impl Compiler {
             //    }
             //  }
             // }
-            match (*self.enclosing).resolve_local(token) {
+            match (*self.enclosing).resolve_local(identifier) {
                 Some(local_idx) => {
                     (*self.enclosing).locals[local_idx].is_captured = true;
                     Some(self.add_upvalue(Upvalue {
@@ -184,7 +184,7 @@ impl Compiler {
                         is_local: true,
                     }))
                 }
-                None => (*self.enclosing).resolve_upvalue(token).map(|upvalue_idx| {
+                None => (*self.enclosing).resolve_upvalue(identifier).map(|upvalue_idx| {
                     self.add_upvalue(Upvalue {
                         idx: upvalue_idx,
                         is_local: false,
@@ -437,13 +437,13 @@ impl Compiler {
         let class_name = self.peek().lexeme;
         let var_idx = self.parse_variable();
         self.emit_byte(OP_CLASS as u8);
-        self.class(&class_name);
-        // Define / set the class as a global or variable
         if self.depth == 0 {
             self.emit_byte(OP_DEFINE_GLOBAL as u8);
         } else {
             self.emit_bytes(OP_SET_LOCAL as u8, var_idx as u8);
         }
+        self.load_identifier(&class_name, false); 
+        self.class();
     }
 
     fn fun_declaration(&mut self) {
@@ -745,26 +745,30 @@ impl Compiler {
     }
 
     fn identifier(&mut self, can_assign: bool) {
+        let identifier = self.next().lexeme;
+        self.load_identifier(&identifier, can_assign);
+    }
+
+    fn load_identifier(&mut self, identifier: &str, can_assign: bool) {
+        // Need to handle local, upvalue and global separately. If we find a local variable defined with the
+        // previous lexeme name, use that. Otherwise check upvalues. Finally default to global.
         let op_set;
         let op_get;
         let arg;
-        // Need to handle local, upvalue and global separately. If we find a local variable defined with the
-        // previous lexeme name, use that. Otherwise check upvalues. Finally default to global.
-        let identifier = self.next();
-        match self.resolve_local(&identifier) {
+        match self.resolve_local(identifier) {
             Some(local_idx) => {
                 arg = local_idx;
                 op_set = OP_SET_LOCAL;
                 op_get = OP_GET_LOCAL;
             }
-            None => match self.resolve_upvalue(&identifier) {
+            None => match self.resolve_upvalue(identifier) {
                 Some(upvalue_idx) => {
                     arg = upvalue_idx;
                     op_set = OP_SET_UPVALUE;
                     op_get = OP_GET_UPVALUE;
                 }
                 None => {
-                    let identifier = identifier.lexeme.to_string();
+                    let identifier = identifier.to_string();
                     arg = self.create_constant(Value::Str(staticallocate(identifier)));
                     op_set = OP_SET_GLOBAL;
                     op_get = OP_GET_GLOBAL;
@@ -846,9 +850,15 @@ impl Compiler {
         arg_count
     }
 
-    fn class(&mut self, class_name: &str) {
+    fn class(&mut self) {
         self.expect(TOKEN_LEFT_BRACE, "Expect '{' at start of class declaration");
+        while self.peek().kind != TOKEN_RIGHT_BRACE && self.peek().kind != TOKEN_EOF {
+            let method = self.next();
+            self.function(&method.lexeme);
+            self.emit_byte(OP_METHOD as u8);
+        }
         self.expect(TOKEN_RIGHT_BRACE, "Expect '}' at end of class declaration");
+        self.emit_byte(OP_POP as u8);
     }
 
     fn function(&mut self, fun_name: &str) {

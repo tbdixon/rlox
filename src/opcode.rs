@@ -39,6 +39,7 @@ pub enum OpCode {
     OP_CLASS,
     OP_GET_PROPERTY,
     OP_SET_PROPERTY,
+    OP_METHOD,
     OP_UNKNOWN = 0xFF,
 }
 use crate::opcode::OpCode::*;
@@ -78,6 +79,7 @@ impl From<OpCode> for u8 {
             OP_CLASS => 0x1D,
             OP_GET_PROPERTY => 0x1E,
             OP_SET_PROPERTY => 0x1F,
+            OP_METHOD => 0x20,
             _ => 0xFF,
         }
     }
@@ -118,6 +120,7 @@ impl From<u8> for OpCode {
             0x1D => OP_CLASS,
             0x1E => OP_GET_PROPERTY,
             0x1F => OP_SET_PROPERTY,
+            0x20 => OP_METHOD,
             _ => OP_UNKNOWN,
         }
     }

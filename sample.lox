@@ -1,6 +1,9 @@
-class fish {}
-var f = fish();
-f.a = 5;
-f.b = 10;
-print(f.a + f.b);
-
+class Person {
+ sayGreeting(greeting) {
+	println(greeting);
+}
+}
+var me = Person();
+me.name = "Blake";
+me.sayGreeting("Hello");
+me.sayGreeting("Goodbye");

@@ -1,4 +1,4 @@
-use crate::value::{Closure, LoxFn, NativeFn, Class, Instance};
+use crate::value::{Class, Closure, Instance, LoxFn, NativeFn, BoundMethod};
 use crate::vm::VM;
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -12,17 +12,18 @@ pub enum LoxObjectType {
     LoxFn,
     Closure,
     NativeFn,
-    Class, 
+    Class,
     Instance,
+    BoundMethod,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct LoxObject {
     pub kind: LoxObjectType,
     pub marked: bool,
-    pub static_: bool, // Marked during Compiling phase for objects that need to live for the duration of the program
     pub deleted: bool,
     pub allocated_size: usize,
+    pub static_: bool, // Marked during Compiling phase for objects that need to live for the duration of the program
     ptr: *mut u8,
 }
 impl std::fmt::Display for LoxObject {
@@ -35,6 +36,7 @@ impl std::fmt::Display for LoxObject {
                 LoxObjectType::NativeFn => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const NativeFn)),
                 LoxObjectType::Class => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const Class)),
                 LoxObjectType::Instance => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const Instance)),
+                LoxObjectType::BoundMethod => write!(f, "{:?} {}", self.kind, &*(self.ptr as *const BoundMethod)),
             }
         }
     }
@@ -89,6 +91,7 @@ impl LoxObject {
                     LoxObjectType::Closure => print!("dropping {:?} ", *(self.ptr as *const Closure)),
                     LoxObjectType::Class => print!("dropping {:?} ", *(self.ptr as *const Class)),
                     LoxObjectType::Instance => print!("dropping {:?} ", *(self.ptr as *const Instance)),
+                    LoxObjectType::BoundMethod => print!("dropping {:?} ", *(self.ptr as *const BoundMethod)),
                 };
                 println!("@ {:p}", self.ptr)
             }
@@ -120,7 +123,7 @@ impl LoxHeap {
         let obj = Box::new(obj.into());
         self.allocated += Layout::new::<T>().size();
         if crate::trace_gc() {
-            println!("allocated {} ({:?} @ {:p}) (total: {})", obj, obj.kind, obj.ptr, self.allocated);
+            println!("\tallocated {} ({:?} @ {:p}) (total: {})", obj, obj.kind, obj.ptr, self.allocated);
         }
         let ptr = std::boxed::Box::into_raw(obj);
         self.objects.push(ptr);
@@ -198,6 +201,9 @@ pub fn staticallocate<T: Into<LoxObject>>(obj: T) -> ValuePtr<T> {
         if (*crate::HEAP).oom() {
             (*crate::HEAP).gc();
         }
+        if crate::trace_gc() {
+            print!("\tstatic ");
+        }
         let ptr = (*crate::HEAP).allocate(obj);
         ptr.static_();
         ptr
@@ -260,7 +266,6 @@ impl<T: std::fmt::Debug> DerefMut for ValuePtr<T> {
         }
     }
 }
-
 
 impl<T> std::fmt::Display for ValuePtr<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

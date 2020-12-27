@@ -152,6 +152,16 @@ impl VM {
                         self.gray_vals.push(Value::Class(ptr.class));
                     }
                 }
+                Value::BoundMethod(ptr) => {
+                    if !ptr.receiver.is_marked() {
+                        ptr.receiver.mark();
+                        self.gray_vals.push(Value::Instance(ptr.receiver));
+                    }
+                    if !ptr.method.is_marked() {
+                        ptr.method.mark();
+                        self.gray_vals.push(Value::Closure(ptr.method));
+                    }
+                }
                 Value::LoxFn(_) => {}    // Functions are static allocated during compilation
                 Value::NativeFn(_) => {} // Native functions are static allocated at startup
                 Value::Str(_) => {}      // Strings have no references
@@ -164,6 +174,11 @@ impl VM {
     #[inline]
     fn peek(&self) -> &Value {
         self.stack.last().unwrap()
+    }
+
+    #[inline]
+    fn peek_mut(&mut self) -> &mut Value {
+        self.stack.last_mut().unwrap()
     }
 
     #[inline]
@@ -497,6 +512,13 @@ impl VM {
         }
     }
 
+    fn method(&mut self) -> Result<InterpretResult> {
+        let method = self.pop();
+        let class: &mut Value = self.peek_mut();
+        class.add_method(method);
+        Ok(INTERPRET_OK)
+    }
+
     fn closure_op(&mut self) -> Result<InterpretResult> {
         // Closure sets up a runtime representation of a LoxFn
         let func_addr: usize = self.read_byte() as usize;
@@ -569,9 +591,19 @@ impl VM {
         let field_name = *self.get_constant(field_addr);
         let instance = self.pop();
         let fields = instance.fields();
-        let val = fields.get(field_name.str()).ok_or_else(|| INTERPRET_RUNTIME_ERROR("Field not defined"))?;
-        self.push(*val);
-        Ok(INTERPRET_OK)
+        let methods = instance.methods();
+        if fields.contains_key(field_name.str()) {
+            let val = fields.get(field_name.str()).ok_or_else(|| INTERPRET_RUNTIME_ERROR("Field not defined"))?;
+            self.push(*val);
+            return Ok(INTERPRET_OK);
+        } else if methods.contains_key(field_name.str()) {
+            let val = methods
+                .get(field_name.str())
+                .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Field not defined"))?;
+            self.push(Value::Closure(*val));
+            return Ok(INTERPRET_OK);
+        }
+        Err(INTERPRET_RUNTIME_ERROR("Property not found on Class"))
     }
 
     fn get_upvalue(&mut self) -> Result<InterpretResult> {
@@ -714,6 +746,7 @@ impl VM {
                 OP_SET_UPVALUE => self.set_upvalue(),
                 OP_CLOSE_UPVALUE => self.close_upvalue(),
                 OP_CLOSURE => self.closure_op(),
+                OP_METHOD => self.method(),
                 OP_PRINT => unreachable!(),
                 OP_UNKNOWN => Err(INTERPRET_COMPILE_ERROR),
             }?;

@@ -106,29 +106,38 @@ impl PartialEq for NativeFn {
 #[derive(Debug, PartialEq)]
 pub struct Class {
     name: String,
-    methods: HashMap<String, Value>,    
+    methods: HashMap<String, ValuePtr<Closure>>,
 }
 
 impl Class {
     pub fn new(name: &str) -> Self {
-        Class{ name: name.to_string(), methods: HashMap::new() }
+        Class {
+            name: name.to_string(),
+            methods: HashMap::new(),
+        }
+    }
+    pub fn add_method(&mut self, method: ValuePtr<Closure>) {
+        self.methods.insert((*method).func().name.as_ref().unwrap().to_string(), method);
     }
 }
 impl fmt::Display for Class {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.name)
+        write!(f, "{} {:?}", self.name, self.methods)
     }
 }
 /*---------------------------------------------------------------------*/
 #[derive(Debug, PartialEq)]
 pub struct Instance {
     pub class: ValuePtr<Class>,
-    pub fields: HashMap<String, Value>,    
+    pub fields: HashMap<String, Value>,
 }
 
 impl Instance {
     pub fn new(class: ValuePtr<Class>) -> Self {
-        Instance{ class, fields: HashMap::new() }
+        Instance {
+            class,
+            fields: HashMap::new(),
+        }
     }
     pub fn set_field(&mut self, field_name: &str, val: Value) {
         self.fields.insert(field_name.to_string(), val);
@@ -137,6 +146,24 @@ impl Instance {
 impl fmt::Display for Instance {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{} instance:{:?}", self.class.name, self.fields)
+    }
+}
+/*---------------------------------------------------------------------*/
+#[derive(Debug, PartialEq)]
+pub struct BoundMethod {
+    pub receiver: ValuePtr<Instance>,
+    pub method: ValuePtr<Closure>,
+}
+
+impl BoundMethod {
+    pub fn new(receiver: ValuePtr<Instance>, method: ValuePtr<Closure>) -> Self {
+        BoundMethod { receiver, method }
+    }
+}
+
+impl fmt::Display for BoundMethod {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "method {}", self.method)
     }
 }
 /*---------------------------------------------------------------------*/
@@ -151,6 +178,7 @@ pub enum Value {
     NativeFn(ValuePtr<NativeFn>),
     Class(ValuePtr<Class>),
     Instance(ValuePtr<Instance>),
+    BoundMethod(ValuePtr<BoundMethod>),
 }
 
 impl Value {
@@ -192,7 +220,7 @@ impl Value {
                 }
                 p.mark();
             }
-              _ => (),
+            _ => (),
         }
     }
     pub fn str(&self) -> &str {
@@ -207,14 +235,29 @@ impl Value {
             _ => unreachable!(),
         }
     }
-    pub fn set_field(&mut self, field_name: &str, val: Value) {
+    pub fn methods(&self) -> &HashMap<String, ValuePtr<Closure>> {
         match self {
-            Value::Instance(p) => {
-                (*p).set_field(field_name,val)
-            }
+            Value::Instance(p) => &(p.class.methods),
             _ => unreachable!(),
         }
     }
+    pub fn set_field(&mut self, field_name: &str, val: Value) {
+        match self {
+            Value::Instance(p) => (*p).set_field(field_name, val),
+            _ => unreachable!(),
+        }
+    }
+    pub fn add_method(&mut self, method: Value) {
+        let method = match method {
+            Value::Closure(ptr) => ptr,
+            _ => unreachable!(),
+        };
+        match self {
+            Value::Class(p) => (*p).add_method(method),
+            _ => unreachable!(),
+        }
+    }
+
     pub fn print(&self) -> String {
         match self {
             Value::Str(p) => p.str().to_string(),
@@ -242,6 +285,7 @@ impl fmt::Display for Value {
             Value::Closure(p) => write!(f, "{}", p),
             Value::Class(p) => write!(f, "{}", p),
             Value::Instance(p) => write!(f, "{}", p),
+            Value::BoundMethod(p) => write!(f, "{}", p),
         }
     }
 }
