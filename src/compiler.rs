@@ -6,7 +6,7 @@ use crate::precedence::Precedence;
 use crate::precedence::Precedence::*;
 use crate::scanner::TokenType::{self, *};
 use crate::scanner::{Scanner, Token, TokenStream};
-use crate::value::{LoxFn, Value};
+use crate::value::{FunctionType, LoxFn, Value};
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
@@ -61,9 +61,10 @@ fn create_jump_offset(jump_offset: usize) -> (u8, u8) {
 }
 
 impl Compiler {
-    pub fn new(tokens: Rc<RefCell<TokenStream>>, enclosing: *mut Compiler, fun_name: Option<String>) -> Self {
+    pub fn new(tokens: Rc<RefCell<TokenStream>>, enclosing: *mut Compiler, fun_name: Option<String>, fun_type: FunctionType) -> Self {
         let mut function = LoxFn::new();
         function.name = fun_name;
+        function.kind = fun_type;
         Compiler {
             tokens,
             enclosing,
@@ -81,7 +82,14 @@ impl Compiler {
     }
 
     fn start_function(&mut self, fun_name: &str, is_method: bool) -> Compiler {
-        let mut compiler = Compiler::new(self.tokens.clone(), &mut *self, Some(fun_name.to_string()));
+        let function_type = if fun_name == "init" {
+            FunctionType::Initializer
+        } else if is_method {
+            FunctionType::Method
+        } else {
+            FunctionType::Function
+        };
+        let mut compiler = Compiler::new(self.tokens.clone(), &mut *self, Some(fun_name.to_string()), function_type);
         if is_method {
             compiler.locals[0].name = "this".to_string();
         };
@@ -260,7 +268,10 @@ impl Compiler {
     }
 
     fn emit_return(&mut self) {
-        self.emit_byte(OP_NIL as u8);
+        match self.function.kind {
+            FunctionType::Initializer => self.emit_bytes(OP_GET_LOCAL as u8, 0 as u8),
+            _ => self.emit_byte(OP_NIL as u8),
+        }
         self.emit_byte(OP_RETURN as u8);
     }
 
@@ -903,7 +914,7 @@ pub fn compile(source: &str) -> Result<LoxFn, CompilerError> {
     // Generate a vector of tokens in reverse order so that compiler can use
     // standard pop commands to move through the Vec.
     let tokens = Rc::new(RefCell::new(Scanner::new(source.trim()).scan()));
-    let mut compiler = Compiler::new(tokens, std::ptr::null_mut(), None);
+    let mut compiler = Compiler::new(tokens, std::ptr::null_mut(), None, FunctionType::Function);
     // Start the compiler by advancing on the first token.
     // Loop until we hit EOF, creating declarations.
     while compiler.peek().kind != TOKEN_EOF {

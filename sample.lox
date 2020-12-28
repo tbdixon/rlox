@@ -1,9 +1,11 @@
 class Person {
- sayGreeting(greeting) {
-	println(this.name + greeting);
+ init(name) {
+	this.name = name;
+}
+saySomething(s) {
+print(s + this.name);
 }
 }
-var me = Person();
-me.name = "Blake";
-me.sayGreeting("Hello");
-me.sayGreeting("Goodbye");
+var inst = Person("Blake");
+print(inst.name);
+inst.saySomething("hello ");

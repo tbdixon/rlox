@@ -3,7 +3,14 @@ use crate::memory::ValuePtr;
 use std::collections::HashMap;
 use std::fmt;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum FunctionType {
+    Function,
+    Method,
+    Initializer,
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub struct Upvalue {
     pub location: usize,
     pub closed: Option<Value>,
@@ -57,6 +64,7 @@ pub struct LoxFn {
     pub arity: u8,
     pub upvalue_count: u8,
     pub chunk: Chunk,
+    pub kind: FunctionType,
 }
 impl LoxFn {
     pub fn new() -> Self {
@@ -65,6 +73,7 @@ impl LoxFn {
             arity: 0,
             chunk: Chunk::new(),
             upvalue_count: 0,
+            kind: FunctionType::Function,
         }
     }
 }
@@ -242,6 +251,7 @@ impl Value {
     pub fn methods(&self) -> &HashMap<String, ValuePtr<Closure>> {
         match self {
             Value::Instance(p) => &(p.class.methods),
+            Value::Class(p) => &(p.methods),
             _ => unreachable!(),
         }
     }

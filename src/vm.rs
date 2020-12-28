@@ -297,11 +297,11 @@ impl VM {
         let function = self.stack[function_idx];
         match function {
             Value::Class(ptr) => {
-                print!("ABCAJDKLFJALSFJA");
-                self.print_stack();
                 let instance = Value::Instance(memory::allocate(Instance::new(ptr)));
-                self.stack.pop();
-                self.push(instance);
+                self.stack[function_idx] = instance;
+                if function.methods().contains_key("init") {
+                    self.call(*function.methods().get("init").unwrap(), function_idx)?;
+                }
                 Ok(INTERPRET_OK)
             }
             Value::BoundMethod(ptr) => {
