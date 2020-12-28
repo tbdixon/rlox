@@ -156,7 +156,11 @@ pub struct BoundMethod {
 }
 
 impl BoundMethod {
-    pub fn new(receiver: ValuePtr<Instance>, method: ValuePtr<Closure>) -> Self {
+    pub fn new(receiver: Value, method: ValuePtr<Closure>) -> Self {
+        let receiver = match receiver {
+            Value::Instance(ptr) => ptr,
+            _ => unreachable!(),
+        };
         BoundMethod { receiver, method }
     }
 }

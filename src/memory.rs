@@ -66,6 +66,7 @@ obj_impl_from!(LoxFn, LoxFn);
 obj_impl_from!(NativeFn, NativeFn);
 obj_impl_from!(Class, Class);
 obj_impl_from!(Instance, Instance);
+obj_impl_from!(BoundMethod, BoundMethod);
 
 macro_rules! obj_assert {
     ($self:ident, $type:ident) => {

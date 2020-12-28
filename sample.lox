@@ -1,6 +1,6 @@
 class Person {
  sayGreeting(greeting) {
-	println(greeting);
+	println(this.name + greeting);
 }
 }
 var me = Person();

@@ -80,8 +80,12 @@ impl Compiler {
         }
     }
 
-    fn start_function(&mut self, fun_name: &str) -> Compiler {
-        Compiler::new(self.tokens.clone(), &mut *self, Some(fun_name.to_string()))
+    fn start_function(&mut self, fun_name: &str, is_method: bool) -> Compiler {
+        let mut compiler = Compiler::new(self.tokens.clone(), &mut *self, Some(fun_name.to_string()));
+        if is_method {
+            compiler.locals[0].name = "this".to_string();
+        };
+        compiler
     }
 
     // TODO: Verify how drop works here with raw pointer.
@@ -368,6 +372,7 @@ impl Compiler {
             TOKEN_STRING => self.string(),
             TOKEN_NUMBER => self.number(),
             TOKEN_IDENTIFIER => self.identifier(can_assign),
+            TOKEN_THIS => self.this(can_assign),
             TOKEN_FALSE | TOKEN_TRUE | TOKEN_NIL => self.literal(),
             TOKEN_BANG | TOKEN_MINUS | TOKEN_PLUS | TOKEN_STAR | TOKEN_SLASH => self.unary(),
             _ => self.parse_error("Expect expression for prefix"),
@@ -450,7 +455,7 @@ impl Compiler {
         self.expect(TOKEN_FUN, "Expect 'fun' at start of a function declaration");
         let fun_name = self.peek().lexeme;
         let var_idx = self.parse_variable();
-        self.function(&fun_name);
+        self.function(&fun_name, false);
         if self.depth == 0 {
             self.emit_byte(OP_DEFINE_GLOBAL as u8);
         } else {
@@ -783,6 +788,10 @@ impl Compiler {
         }
     }
 
+    fn this(&mut self, can_assign: bool) {
+        self.identifier(can_assign);
+    }
+
     fn dot(&mut self, can_assign: bool) {
         self.expect(TOKEN_DOT, "Expect '.' before setter / getter");
         let field = self.next();
@@ -854,15 +863,15 @@ impl Compiler {
         self.expect(TOKEN_LEFT_BRACE, "Expect '{' at start of class declaration");
         while self.peek().kind != TOKEN_RIGHT_BRACE && self.peek().kind != TOKEN_EOF {
             let method = self.next();
-            self.function(&method.lexeme);
+            self.function(&method.lexeme, true);
             self.emit_byte(OP_METHOD as u8);
         }
         self.expect(TOKEN_RIGHT_BRACE, "Expect '}' at end of class declaration");
         self.emit_byte(OP_POP as u8);
     }
 
-    fn function(&mut self, fun_name: &str) {
-        let mut compiler = self.start_function(fun_name);
+    fn function(&mut self, fun_name: &str, is_method: bool) {
+        let mut compiler = self.start_function(fun_name, is_method);
         // Start a new scope to avoid anything being defined as a global inside of a function
         // since we use depth == 0 to decide on global definition.
         compiler.begin_scope();

@@ -6,7 +6,7 @@ use crate::memory;
 use crate::memory::ValuePtr;
 use crate::natives;
 use crate::opcode::OpCode::{self, *};
-use crate::value::{Class, Closure, Instance, NativeFn, Upvalue, Value};
+use crate::value::{BoundMethod, Class, Closure, Instance, NativeFn, Upvalue, Value};
 use std::collections::BTreeMap;
 use std::mem::discriminant;
 
@@ -293,6 +293,10 @@ impl VM {
                 self.stack.pop();
                 self.push(instance);
                 Ok(INTERPRET_OK)
+            }
+            Value::BoundMethod(ptr) => {
+                self.stack[function_idx] = Value::Instance(ptr.receiver);
+                self.call(ptr.method, function_idx)
             }
             Value::Closure(ptr) => {
                 if (*ptr).arity() != arg_count as u8 {
@@ -600,7 +604,7 @@ impl VM {
             let val = methods
                 .get(field_name.str())
                 .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Field not defined"))?;
-            self.push(Value::Closure(*val));
+            self.push(Value::BoundMethod(memory::allocate(BoundMethod::new(instance, *val))));
             return Ok(INTERPRET_OK);
         }
         Err(INTERPRET_RUNTIME_ERROR("Property not found on Class"))
