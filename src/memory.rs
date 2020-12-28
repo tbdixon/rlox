@@ -84,7 +84,7 @@ impl LoxObject {
         assert!(!self.deleted);
         unsafe {
             if crate::trace_gc() {
-                print!("\t\t-");
+                print!("-");
                 match self.kind {
                     LoxObjectType::Str => print!("dropping {:?} ", *(self.ptr as *const String)),
                     LoxObjectType::LoxFn => print!("dropping {:?} ", *(self.ptr as *const LoxFn)),
@@ -177,11 +177,12 @@ impl LoxHeap {
             }
         }
         if crate::trace_gc() {
+            print!("-- end gc");
             let freed = init_allocated - self.allocated;
             if freed > 0 {
-                println!("\t\tfreed {}", freed);
+                print!(" freed {}", freed);
             }
-            println!("-- end gc");
+            println!("");
         }
     }
 }

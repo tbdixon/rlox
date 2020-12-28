@@ -105,8 +105,8 @@ impl PartialEq for NativeFn {
 /*---------------------------------------------------------------------*/
 #[derive(Debug, PartialEq)]
 pub struct Class {
-    name: String,
-    methods: HashMap<String, ValuePtr<Closure>>,
+    pub name: String,
+    pub methods: HashMap<String, ValuePtr<Closure>>,
 }
 
 impl Class {

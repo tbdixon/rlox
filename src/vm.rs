@@ -143,6 +143,14 @@ impl VM {
                         self.gray_vals.push(Value::LoxFn(ptr.func()));
                     }
                 }
+                Value::Class(ptr) => {
+                    for (_, method) in &ptr.methods {
+                        if !method.is_marked() {
+                            method.mark();
+                            self.gray_vals.push(Value::Closure(*method));
+                        }
+                    }
+                }
                 Value::Instance(ptr) => {
                     for (_, field) in &ptr.fields {
                         field.mark();
@@ -289,6 +297,8 @@ impl VM {
         let function = self.stack[function_idx];
         match function {
             Value::Class(ptr) => {
+                print!("ABCAJDKLFJALSFJA");
+                self.print_stack();
                 let instance = Value::Instance(memory::allocate(Instance::new(ptr)));
                 self.stack.pop();
                 self.push(instance);
