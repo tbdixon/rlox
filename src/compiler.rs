@@ -313,7 +313,7 @@ impl Compiler {
     //
     // Input is the address the patch (see emit_jump) and this is patched to jump
     // to the current memory location. That location is determined by the
-    //.function.chunk.count() [Total Instructions] - [Patch Addr] - 2. -2 is due to the
+    // function.chunk.count() [Total Instructions] - [Patch Addr] - 2. -2 is due to the
     // actual VM moving the IP forward by 2 when reading the jump offset.
     fn patch_jump(&mut self, addr: usize) {
         let (high_bits, low_bits) = create_jump_offset(self.function.chunk.count() - addr - 2);
@@ -384,6 +384,7 @@ impl Compiler {
             TOKEN_NUMBER => self.number(),
             TOKEN_IDENTIFIER => self.identifier(can_assign),
             TOKEN_THIS => self.this(can_assign),
+            TOKEN_SUPER => self.super_(can_assign),
             TOKEN_FALSE | TOKEN_TRUE | TOKEN_NIL => self.literal(),
             TOKEN_BANG | TOKEN_MINUS | TOKEN_PLUS | TOKEN_STAR | TOKEN_SLASH => self.unary(),
             _ => self.parse_error("Expect expression for prefix"),
@@ -458,8 +459,19 @@ impl Compiler {
         } else {
             self.emit_bytes(OP_SET_LOCAL as u8, var_idx as u8);
         }
+        self.begin_scope();
+        if self.match_(TOKEN_LESS) {
+            let local_idx = self.add_local("super".to_string());
+            self.identifier(false);
+            self.emit_bytes(OP_SET_LOCAL as u8, local_idx as u8);
+
+            self.load_identifier(&class_name, false);
+            self.emit_byte(OP_INHERIT as u8);
+        }
+
         self.load_identifier(&class_name, false);
         self.class();
+        self.end_scope();
     }
 
     fn fun_declaration(&mut self) {
@@ -801,6 +813,16 @@ impl Compiler {
 
     fn this(&mut self, can_assign: bool) {
         self.identifier(can_assign);
+    }
+
+    fn super_(&mut self, _: bool) {
+        self.expect(TOKEN_SUPER, "Expect super");
+        self.expect(TOKEN_DOT, "Expect dot after super");
+        let super_method = self.next();
+        let super_method_idx = self.create_constant(Value::Str(staticallocate(super_method.lexeme.to_string())));
+        self.load_identifier("this", false);
+        self.load_identifier("super", false);
+        self.emit_bytes(OP_GET_SUPER as u8, super_method_idx as u8);
     }
 
     fn dot(&mut self, can_assign: bool) {

@@ -543,6 +543,44 @@ impl VM {
         Ok(INTERPRET_OK)
     }
 
+    fn super_(&mut self) -> Result<InterpretResult> {
+        let method_idx = self.read_byte();
+        let method_name = self.get_constant(method_idx as usize).str().to_string();
+        let super_class = *self.peek();
+        if let Value::Class(ptr) = super_class {
+            let instance = Value::Instance(memory::allocate(Instance::new(ptr)));
+            self.push(instance);
+            if super_class.methods().contains_key(&method_name) {
+                let method = super_class
+                    .methods()
+                    .get(&method_name)
+                    .ok_or_else(|| INTERPRET_RUNTIME_ERROR("Super method not defined"))?;
+                let bound_method = Value::BoundMethod(memory::allocate(BoundMethod::new(instance, *method)));
+                self.pop();
+                self.pop();
+                self.push(bound_method);
+                return Ok(INTERPRET_OK);
+            }
+        }
+        Err(INTERPRET_RUNTIME_ERROR("Method not found on Super"))
+    }
+
+    fn inherit(&mut self) -> Result<InterpretResult> {
+        let mut sub_ = match self.pop() {
+            Value::Class(ptr) => ptr,
+            _ => return Err(INTERPRET_RUNTIME_ERROR("Not a valid subclass")),
+        };
+        let super_ = self.peek();
+        if let Value::Class(_) = super_ {
+            for (_, method) in super_.methods() {
+                sub_.add_method(*method);
+            }
+        } else {
+            return Err(INTERPRET_RUNTIME_ERROR("Not a valid superclass"));
+        }
+        Ok(INTERPRET_OK)
+    }
+
     fn class(&mut self) -> Result<InterpretResult> {
         let class_name = (*self.peek()).str();
         let class = Class::new(class_name);
@@ -761,6 +799,8 @@ impl VM {
                 OP_CLOSE_UPVALUE => self.close_upvalue(),
                 OP_CLOSURE => self.closure_op(),
                 OP_METHOD => self.method(),
+                OP_INHERIT => self.inherit(),
+                OP_GET_SUPER => self.super_(),
                 OP_PRINT => unreachable!(),
                 OP_UNKNOWN => Err(INTERPRET_COMPILE_ERROR),
             }?;

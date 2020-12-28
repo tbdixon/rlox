@@ -32,6 +32,7 @@ pub fn get_precedence(kind: TokenType) -> Precedence {
         TOKEN_SEMICOLON => PREC_NONE,
         TOKEN_COMMA => PREC_NONE,
         TOKEN_THIS => PREC_NONE,
+        TOKEN_SUPER => PREC_NONE,
         TOKEN_MINUS => PREC_TERM,
         TOKEN_PLUS => PREC_TERM,
         TOKEN_STAR => PREC_FACTOR,

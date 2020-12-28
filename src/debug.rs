@@ -48,6 +48,8 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OP_SET_PROPERTY => constant_instruction(OP_SET_PROPERTY, chunk, offset),
         OP_CLOSE_UPVALUE => byte_instruction(OP_CLOSE_UPVALUE, chunk, offset),
         OP_METHOD => simple_instruction(OP_METHOD, offset),
+        OP_INHERIT => simple_instruction(OP_INHERIT, offset),
+        OP_GET_SUPER => byte_instruction(OP_GET_SUPER, chunk, offset),
         OP_UNKNOWN => {
             println!("Unknown Opcode Encountered");
             offset + 1

@@ -1,11 +1,19 @@
-class Person {
- init(name) {
-	this.name = name;
+class Animal {
+  saySomething(word) {
+    println("Animal sound" + word);
+  }
 }
-saySomething(s) {
-print(s + this.name);
+
+class Dog < Animal {
+  init(name) {
+    this.name = name;
+  }
+
+  saySomething(word) {
+   println("Woof woof " + word);
+   super.saySomething(word);
+  }
 }
-}
-var inst = Person("Blake");
-print(inst.name);
-inst.saySomething("hello ");
+
+var inst = Dog("Fido");
+inst.saySomething("Hello");
