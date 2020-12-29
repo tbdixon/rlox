@@ -43,7 +43,8 @@ impl From<crate::compiler::CompilerError> for InterpretResult {
 pub struct CallFrame {
     closure: ValuePtr<Closure>,
     slot: usize,
-    ip: usize,
+    prior_chunk: *const Chunk,
+    prior_ip: usize,
 }
 
 // A stack-based VM. IP points into the current executing instruction. Every expression should have
@@ -60,6 +61,8 @@ const STACK_SIZE: usize = MAX_FRAME_COUNT * 256;
 pub struct VM {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
+    ip: usize,
+    chunk: *const Chunk,
     upvalues: Vec<Upvalue>,
     globals: BTreeMap<String, Value>,
     gray_vals: Vec<Value>,
@@ -79,6 +82,8 @@ impl VM {
         VM {
             frames: Vec::with_capacity(MAX_FRAME_COUNT),
             stack: Vec::with_capacity(STACK_SIZE),
+            ip: 0,
+            chunk: std::ptr::null(),
             upvalues: Vec::with_capacity(u8::MAX as usize),
             gray_vals: Vec::with_capacity(STACK_SIZE),
             globals: BTreeMap::new(),
@@ -195,33 +200,8 @@ impl VM {
     }
 
     #[inline]
-    fn ip(&self) -> usize {
-        self.frames.last().unwrap().ip
-    }
-
-    #[inline]
-    fn increment_ip(&mut self) {
-        self.frames.last_mut().unwrap().ip += 1
-    }
-
-    #[inline]
-    fn add_ip(&mut self, offset: usize) {
-        self.frames.last_mut().unwrap().ip += offset;
-    }
-
-    #[inline]
-    fn sub_ip(&mut self, offset: usize) {
-        self.frames.last_mut().unwrap().ip -= offset;
-    }
-
-    #[inline]
-    fn chunk(&self) -> &Chunk {
-        &(*self.frames.last().unwrap().closure).chunk()
-    }
-
-    #[inline]
     fn get_constant(&self, constant_addr: usize) -> &Value {
-        &self.chunk().constant_pool[constant_addr]
+        unsafe { &(*self.chunk).constant_pool[constant_addr] }
     }
 
     #[inline]
@@ -260,9 +240,13 @@ impl VM {
     fn stack_trace(&mut self, source: &str) -> Result<()> {
         let source: Vec<&str> = source.split("\n").collect();
         while !self.frames.is_empty() {
-            let source_line = self.chunk().lines[self.ip()] - 1;
-            println!("[line {}] in {}", source_line + 1, source[source_line as usize]);
-            self.frames.pop().unwrap();
+            unsafe {
+                let source_line = (*self.chunk).lines[self.ip] - 1;
+                println!("[line {}] in {}", source_line + 1, source[source_line as usize]);
+                let frame = self.frames.pop().unwrap();
+                self.ip = frame.prior_ip;
+                self.chunk = frame.prior_chunk;
+            }
         }
         Ok(())
     }
@@ -270,8 +254,8 @@ impl VM {
     // Reads the next byte and moves the instruction pointer.
     #[inline]
     fn read_byte(&mut self) -> u8 {
-        self.increment_ip();
-        self.chunk().code[self.ip() - 1]
+        self.ip += 1;
+        unsafe { (*self.chunk).code[self.ip - 1] }
     }
 
     // When a call starts the code / stack looks like below. The function name and
@@ -347,8 +331,11 @@ impl VM {
         let frame = CallFrame {
             closure: closure,
             slot,
-            ip: 0,
+            prior_ip: self.ip,
+            prior_chunk: self.chunk,
         };
+        self.ip = 0;
+        self.chunk = closure.chunk() as *const Chunk;
         self.frames.push(frame);
         Ok(INTERPRET_OK)
     }
@@ -393,6 +380,8 @@ impl VM {
 
     fn discard_frame(&mut self) -> Result<InterpretResult> {
         let frame = self.frames.pop().ok_or(INTERPRET_RUNTIME_ERROR("Error discarding call frame"))?;
+        self.ip = frame.prior_ip;
+        self.chunk = frame.prior_chunk;
         if self.upvalues.len() == 0 {
             self.stack.truncate(frame.slot + 1);
         } else {
@@ -692,7 +681,7 @@ impl VM {
     fn jump_false(&mut self) -> Result<InterpretResult> {
         let offset = self.get_jump_offset();
         if self.peek().is_falsey() {
-            self.add_ip(offset);
+            self.ip += offset;
         }
         Ok(INTERPRET_OK)
     }
@@ -700,14 +689,14 @@ impl VM {
     #[inline]
     fn jump(&mut self) -> Result<InterpretResult> {
         let offset = self.get_jump_offset();
-        self.add_ip(offset);
+        self.ip += offset;
         Ok(INTERPRET_OK)
     }
 
     #[inline]
     fn loop_(&mut self) -> Result<InterpretResult> {
         let offset = self.get_jump_offset();
-        self.sub_ip(offset);
+        self.ip -= offset;
         Ok(INTERPRET_OK)
     }
 
@@ -763,10 +752,14 @@ impl VM {
                 self.print_stack();
                 //self.print_globals();
                 //self.print_upvals();
-                disassemble_instruction(self.chunk(), self.ip());
+                unsafe {
+                    disassemble_instruction(&(*self.chunk), self.ip);
+                }
             }
             let instruction = OpCode::from(self.read_byte());
             status = match instruction {
+                OP_GET_GLOBAL => self.get_global(),
+                OP_CLOSURE => self.closure_op(),
                 OP_CALL => self.setup_call(),
                 OP_RETURN => self.ret(),
                 OP_CONSTANT => self.constant(),
@@ -783,7 +776,6 @@ impl VM {
                 OP_DIVIDE => self.binary(&std::ops::Div::div),
                 OP_POP => self.pop_op(),
                 OP_SET_LOCAL => self.set_local(),
-                OP_GET_GLOBAL => self.get_global(),
                 OP_GET_UPVALUE => self.get_upvalue(),
                 OP_NEGATE => self.negate(),
                 OP_NIL => self.nil(),
@@ -797,7 +789,6 @@ impl VM {
                 OP_SET_GLOBAL => self.set_global(),
                 OP_SET_UPVALUE => self.set_upvalue(),
                 OP_CLOSE_UPVALUE => self.close_upvalue(),
-                OP_CLOSURE => self.closure_op(),
                 OP_METHOD => self.method(),
                 OP_INHERIT => self.inherit(),
                 OP_GET_SUPER => self.super_(),

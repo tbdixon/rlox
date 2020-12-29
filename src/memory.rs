@@ -68,20 +68,12 @@ obj_impl_from!(Class, Class);
 obj_impl_from!(Instance, Instance);
 obj_impl_from!(BoundMethod, BoundMethod);
 
-macro_rules! obj_assert {
-    ($self:ident, $type:ident) => {
-        assert!($self.kind == LoxObjectType::$type && !$self.deleted);
-    };
-}
-
 impl LoxObject {
     fn str(&self) -> &String {
-        obj_assert!(self, Str);
         unsafe { &*(self.ptr as *const String) }
     }
 
     fn drop(mut self) {
-        assert!(!self.deleted);
         unsafe {
             if crate::trace_gc() {
                 print!("-");
@@ -254,7 +246,6 @@ impl<T: std::fmt::Debug> Deref for ValuePtr<T> {
     #[inline]
     fn deref(&self) -> &Self::Target {
         unsafe {
-            assert!(!(*self.ptr).deleted);
             &*(((*self.ptr).ptr) as *const T)
         }
     }
@@ -263,7 +254,6 @@ impl<T: std::fmt::Debug> DerefMut for ValuePtr<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
-            assert!(!(*self.ptr).deleted);
             &mut *(((*self.ptr).ptr) as *mut T)
         }
     }
